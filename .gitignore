@@ -1,0 +1,61 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+.venv/
+*.egg-info/
+dist/
+build/
+
+# Secrets — NEVER commit these
+.dev.vars
+.env
+.env.local
+.env.production
+.env.*.local
+*.secret
+secrets.json
+credentials.json
+wrangler.production.toml
+.env.production
+
+# Wrangler local state
+.wrangler/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Logs
+*.log
+
+# Eval outputs (can be large)
+evaluation-harness/results/
+evaluation-harness/.cache/
+
+# Large model files
+*.gguf
+*.bin
+models/
+
+# Terraform
+.terraform/
+*.tfstate
+.terraform.lock.hcl

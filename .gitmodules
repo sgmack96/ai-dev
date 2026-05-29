@@ -1,0 +1,3 @@
+[submodule "projects/ai-sales-copilot"]
+	path = projects/ai-sales-copilot
+	url = https://github.com/sgmack96/ai-sales-copilot.git
