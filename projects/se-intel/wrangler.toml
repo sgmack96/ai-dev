@@ -12,9 +12,17 @@ class_name = "AccountIntelAgent"
 name = "ENABLEMENT_AGENT"
 class_name = "EnablementAgent"
 
+[[durable_objects.bindings]]
+name = "TRANSCRIPT_AGENT"
+class_name = "TranscriptAgent"
+
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["AccountIntelAgent", "EnablementAgent"]
+
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["TranscriptAgent"]
 
 # ── KV Namespaces ─────────────────────────────────────────────────────────────
 [[kv_namespaces]]
@@ -76,9 +84,17 @@ class_name = "AccountIntelAgent"
 name = "ENABLEMENT_AGENT"
 class_name = "EnablementAgent"
 
+[[env.portfolio.durable_objects.bindings]]
+name = "TRANSCRIPT_AGENT"
+class_name = "TranscriptAgent"
+
 [[env.portfolio.migrations]]
 tag = "v1"
 new_sqlite_classes = ["AccountIntelAgent", "EnablementAgent"]
+
+[[env.portfolio.migrations]]
+tag = "v2"
+new_sqlite_classes = ["TranscriptAgent"]
 
 [env.portfolio.ai]
 binding = "AI"
@@ -115,9 +131,17 @@ class_name = "AccountIntelAgent"
 name = "ENABLEMENT_AGENT"
 class_name = "EnablementAgent"
 
+[[env.production.durable_objects.bindings]]
+name = "TRANSCRIPT_AGENT"
+class_name = "TranscriptAgent"
+
 [[env.production.migrations]]
 tag = "v1"
 new_sqlite_classes = ["AccountIntelAgent", "EnablementAgent"]
+
+[[env.production.migrations]]
+tag = "v2"
+new_sqlite_classes = ["TranscriptAgent"]
 
 [env.production.ai]
 binding = "AI"

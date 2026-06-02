@@ -31,6 +31,7 @@ import type { Env, Role } from "./types/index.js";
 // Re-export DO classes so wrangler can find them
 export { AccountIntelAgent } from "./agents/account-intel.js";
 export { EnablementAgent } from "./agents/enablement.js";
+export { TranscriptAgent } from "./agents/transcript.js";
 
 // KB seed utility
 import { seedVectorize } from "../scripts/seed-kb.js";
@@ -48,7 +49,7 @@ app.get("/health", (c) => {
     status: "ok",
     service: "se-intel",
     version: "1.0.0",
-    agents: ["account", "enablement"],
+    agents: ["account", "enablement", "transcript"],
     environment: c.env.ENVIRONMENT,
     timestamp: new Date().toISOString(),
   });
@@ -266,6 +267,81 @@ app.post("/api/v1/account/stream", async (c) => {
   });
 });
 
+// ── Transcript Agent ──────────────────────────────────────────────────────────
+app.post("/api/v1/transcript", async (c) => {
+  const userContext = c.get("userContext" as never) as Awaited<
+    ReturnType<typeof extractUserContext>
+  >;
+
+  let body: { message?: string; threadId?: string };
+  try {
+    body = (await c.req.json()) as typeof body;
+  } catch {
+    return c.json({ error: "Invalid JSON body" }, { status: 400 });
+  }
+
+  const { message, threadId } = body;
+  if (!message) {
+    return c.json({ error: "message is required — paste your call transcript or notes" }, { status: 400 });
+  }
+
+  const tid = threadId ?? crypto.randomUUID();
+  const doId = c.env.TRANSCRIPT_AGENT.idFromName(userContext!.userId);
+  const stub = c.env.TRANSCRIPT_AGENT.get(doId);
+
+  const doResp = await stub.fetch(
+    new Request("https://do-internal/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message, threadId: tid, userContext }),
+    })
+  );
+
+  const result = await doResp.json();
+  return c.json(result, doResp.status as 200 | 400 | 500);
+});
+
+// ── Streaming: Transcript Agent ──────────────────────────────────────────────
+app.post("/api/v1/transcript/stream", async (c) => {
+  const userContext = c.get("userContext" as never) as Awaited<
+    ReturnType<typeof extractUserContext>
+  >;
+
+  let body: { message?: string; threadId?: string };
+  try {
+    body = (await c.req.json()) as typeof body;
+  } catch {
+    return c.json({ error: "Invalid JSON body" }, { status: 400 });
+  }
+
+  const { message, threadId } = body;
+  if (!message) {
+    return c.json({ error: "message is required" }, { status: 400 });
+  }
+
+  const tid = threadId ?? crypto.randomUUID();
+  const doId = c.env.TRANSCRIPT_AGENT.idFromName(userContext!.userId);
+  const stub = c.env.TRANSCRIPT_AGENT.get(doId);
+
+  const doResp = await stub.fetch(
+    new Request("https://do-internal/stream", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message, threadId: tid, userContext }),
+    })
+  );
+
+  return new Response(doResp.body, {
+    status: doResp.status,
+    headers: {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      "Connection": "keep-alive",
+      "X-Accel-Buffering": "no",
+    },
+  });
+});
+
 // ── Streaming: Enablement Agent ───────────────────────────────────────────────
 app.post("/api/v1/enablement/stream", async (c) => {
   const userContext = c.get("userContext" as never) as Awaited<
@@ -338,15 +414,19 @@ app.get("/api/v1/history/:agent", async (c) => {
   const agent = c.req.param("agent");
   const threadId = c.req.query("threadId");
 
-  if (agent !== "account" && agent !== "enablement") {
+  if (agent !== "account" && agent !== "enablement" && agent !== "transcript") {
     return c.json(
-      { error: "agent must be 'account' or 'enablement'" },
+      { error: "agent must be 'account', 'enablement', or 'transcript'" },
       { status: 400 }
     );
   }
 
   const ns =
-    agent === "account" ? c.env.ACCOUNT_AGENT : c.env.ENABLEMENT_AGENT;
+    agent === "account"
+      ? c.env.ACCOUNT_AGENT
+      : agent === "enablement"
+        ? c.env.ENABLEMENT_AGENT
+        : c.env.TRANSCRIPT_AGENT;
   const doId = ns.idFromName(userContext!.userId);
   const stub = ns.get(doId);
 

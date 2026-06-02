@@ -16,7 +16,7 @@ export interface UserContext {
 }
 
 // ── Agent Types ───────────────────────────────────────────────────────────────
-export type AgentType = "account" | "enablement";
+export type AgentType = "account" | "enablement" | "transcript";
 
 // ── Message ───────────────────────────────────────────────────────────────────
 // Single conversation turn stored in DO SQLite.
@@ -78,6 +78,7 @@ export interface Env {
   // Durable Objects
   ACCOUNT_AGENT: DurableObjectNamespace;
   ENABLEMENT_AGENT: DurableObjectNamespace;
+  TRANSCRIPT_AGENT: DurableObjectNamespace;
 
   // KV
   RATE_LIMIT_KV: KVNamespace;
