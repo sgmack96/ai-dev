@@ -1,0 +1,86 @@
+[
+  {
+    "id": "enb-001",
+    "agent": "enablement",
+    "role": "se",
+    "input": "How does Cloudflare Workers compare to AWS Lambda? Prospect is asking about vendor lock-in.",
+    "expected": {
+      "topics_covered": ["Workers vs Lambda", "vendor lock-in", "WinterCG", "cold starts"],
+      "tools_expected": ["kb_search"],
+      "max_latency_ms": 35000
+    },
+    "rubric": "SE role — must go technically deep. Must address cold starts (V8 isolates vs containers), the WinterCG/standards portability argument against lock-in, and give at least one concrete technical proof point. Must use the 4-part objection format: acknowledge, reframe, proof point, bridge. Should NOT just say 'Workers is better' — must give the rep specific language they can use."
+  },
+  {
+    "id": "enb-002",
+    "agent": "enablement",
+    "role": "ae",
+    "input": "How does Cloudflare Workers compare to AWS Lambda? Prospect is asking about vendor lock-in.",
+    "expected": {
+      "topics_covered": ["Workers vs Lambda", "vendor lock-in", "business outcomes"],
+      "tools_expected": ["kb_search"],
+      "max_latency_ms": 35000
+    },
+    "rubric": "AE role — same question as enb-001 but must be shallower and more business-focused. Should NOT mention V8 isolates, WinterCG compatibility, or nodejs_compat flags. Business framing: cost, speed, simplicity. Should be noticeably shorter and less technical than the SE answer. If the response mentions runtime internals it has failed the role-appropriateness test."
+  },
+  {
+    "id": "enb-003",
+    "agent": "enablement",
+    "role": "se",
+    "input": "What is the POC pattern for migrating a customer from Fastly to Cloudflare CDN?",
+    "expected": {
+      "topics_covered": ["POC", "Fastly migration", "CDN", "DNS cutover", "timeline"],
+      "tools_expected": ["kb_search"],
+      "max_latency_ms": 35000
+    },
+    "rubric": "SE role with access to se_only KB. Must give a structured POC plan with phases and timeline (days/weeks). Must address the DNS cutover challenge specifically — this is the trickiest part of a CDN migration. Should mention VCL rule translation to Cloudflare Rules. Must give success criteria the rep can use. If the response is generic ('deploy Cloudflare in front of Fastly') without specific phases it has not used the se_only KB."
+  },
+  {
+    "id": "enb-004",
+    "agent": "enablement",
+    "role": "ae",
+    "input": "What is the POC pattern for migrating a customer from Fastly to Cloudflare CDN?",
+    "expected": {
+      "topics_covered": ["Fastly migration", "CDN"],
+      "tools_expected": ["kb_search"],
+      "max_latency_ms": 35000
+    },
+    "rubric": "AE role — does NOT have se_only KB access. Should give a high-level migration overview appropriate for an AE to understand and explain, but must NOT include the detailed POC phases with VCL translation steps and specific timelines that are in the se_only KB. If it gives a detailed technical POC plan with week-by-week breakdown it has incorrectly accessed se_only content. Should recommend involving an SE for the technical POC details."
+  },
+  {
+    "id": "enb-005",
+    "agent": "enablement",
+    "role": "sales_manager",
+    "input": "Deal stalled at $250K ACV. What is the discount approval process and how do I get executive sponsorship?",
+    "expected": {
+      "topics_covered": ["discount approval", "executive sponsorship", "deal strategy"],
+      "tools_expected": ["kb_search"],
+      "max_latency_ms": 35000
+    },
+    "rubric": "Sales manager role with manager_only KB access. Must give a specific discount approval framework with tiers (who approves what percentage). Must give concrete executive sponsorship steps — not vague advice like 'get your VP involved'. Should reference the champion test concept or equivalent qualification check. Must NOT be a product pitch — the manager knows the product. If response spends more than 1 sentence on Cloudflare products it has missed the point."
+  },
+  {
+    "id": "enb-006",
+    "agent": "enablement",
+    "role": "se",
+    "input": "Prospect says Cloudflare is not enterprise-ready. How do I respond?",
+    "expected": {
+      "topics_covered": ["enterprise readiness", "compliance", "SLA", "objection handling"],
+      "tools_expected": ["kb_search"],
+      "max_latency_ms": 35000
+    },
+    "rubric": "Must use the 4-part objection format. Must cite specific enterprise proof points: at least 2 of — SOC 2 Type II, ISO 27001, FedRAMP, PCI DSS, 100% uptime SLA, named customer examples (Shopify, Discord). Should give a follow-up question to get specific ('what specific enterprise requirements are you evaluating?'). Must NOT be defensive — acknowledge the concern before pivoting. Generic 'Cloudflare is trusted by many enterprises' without specifics fails groundedness."
+  },
+  {
+    "id": "enb-007",
+    "agent": "enablement",
+    "role": "se",
+    "input": "What is the integration complexity for migrating from Auth0 to Cloudflare Access?",
+    "expected": {
+      "topics_covered": ["Auth0", "Cloudflare Access", "SAML", "OIDC", "integration timeline"],
+      "tools_expected": ["kb_search"],
+      "max_latency_ms": 35000
+    },
+    "rubric": "SE role — must give a specific integration complexity assessment with time estimate (days). Must mention the SAML or OIDC configuration steps. Should mention that Auth0 free tier lacks SAML (important gotcha). Must give the specific ACS URL format for Cloudflare Access. If the response gives a vague 'it depends on your setup' without specifics it has not used the se_only integration guide. Must be actionable enough that an SE could start the integration tomorrow."
+  }
+]

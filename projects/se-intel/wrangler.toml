@@ -1,0 +1,123 @@
+name = "se-intel-portfolio"
+main = "src/index.ts"
+compatibility_date = "2025-01-01"
+compatibility_flags = ["nodejs_compat"]
+
+# ── Durable Objects ───────────────────────────────────────────────────────────
+[[durable_objects.bindings]]
+name = "ACCOUNT_AGENT"
+class_name = "AccountIntelAgent"
+
+[[durable_objects.bindings]]
+name = "ENABLEMENT_AGENT"
+class_name = "EnablementAgent"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["AccountIntelAgent", "EnablementAgent"]
+
+# ── KV Namespaces ─────────────────────────────────────────────────────────────
+[[kv_namespaces]]
+binding = "RATE_LIMIT_KV"
+id = "b49f483d0e1f49d5b97157ff526ee3df"
+
+[[kv_namespaces]]
+binding = "USER_MEMORY_KV"
+id = "f60b1635f9b443bb9b1f0a7b4b749758"
+
+# ── D1 Database ───────────────────────────────────────────────────────────────
+[[d1_databases]]
+binding = "DB"
+database_name = "se-intel-portfolio-db"
+database_id = "b47682bc-f4cf-498c-8455-5b70c3313cae"
+
+# ── Vectorize ─────────────────────────────────────────────────────────────────
+[[vectorize]]
+binding = "VECTORIZE"
+index_name = "se-intel-portfolio-kb"
+
+# ── Workers AI ────────────────────────────────────────────────────────────────
+[ai]
+binding = "AI"
+
+# ── Environment Variables ─────────────────────────────────────────────────────
+[vars]
+ENVIRONMENT = "portfolio"
+JWT_AUDIENCE = "se-intel-portfolio"
+# JWT_SECRET set via: wrangler secret put JWT_SECRET
+
+# ── Portfolio environment (public, synthetic data) ────────────────────────────
+[env.portfolio]
+name = "se-intel-portfolio"
+vars = { ENVIRONMENT = "portfolio", JWT_AUDIENCE = "se-intel-portfolio" }
+
+[[env.portfolio.kv_namespaces]]
+binding = "RATE_LIMIT_KV"
+id = "b49f483d0e1f49d5b97157ff526ee3df"
+
+[[env.portfolio.kv_namespaces]]
+binding = "USER_MEMORY_KV"
+id = "f60b1635f9b443bb9b1f0a7b4b749758"
+
+[[env.portfolio.d1_databases]]
+binding = "DB"
+database_name = "se-intel-portfolio-db"
+database_id = "b47682bc-f4cf-498c-8455-5b70c3313cae"
+
+[[env.portfolio.vectorize]]
+binding = "VECTORIZE"
+index_name = "se-intel-portfolio-kb"
+
+[[env.portfolio.durable_objects.bindings]]
+name = "ACCOUNT_AGENT"
+class_name = "AccountIntelAgent"
+
+[[env.portfolio.durable_objects.bindings]]
+name = "ENABLEMENT_AGENT"
+class_name = "EnablementAgent"
+
+[[env.portfolio.migrations]]
+tag = "v1"
+new_sqlite_classes = ["AccountIntelAgent", "EnablementAgent"]
+
+[env.portfolio.ai]
+binding = "AI"
+
+# ── Production environment (private, real data) ───────────────────────────────
+# Deploy with: wrangler deploy --env production
+# wrangler.production.toml (gitignored) overrides sensitive values
+[env.production]
+name = "se-intel-production"
+vars = { ENVIRONMENT = "production", JWT_AUDIENCE = "se-intel-production" }
+
+[[env.production.kv_namespaces]]
+binding = "RATE_LIMIT_KV"
+id = "b49f483d0e1f49d5b97157ff526ee3df"
+
+[[env.production.kv_namespaces]]
+binding = "USER_MEMORY_KV"
+id = "f60b1635f9b443bb9b1f0a7b4b749758"
+
+[[env.production.d1_databases]]
+binding = "DB"
+database_name = "se-intel-portfolio-db"
+database_id = "b47682bc-f4cf-498c-8455-5b70c3313cae"
+
+[[env.production.vectorize]]
+binding = "VECTORIZE"
+index_name = "se-intel-production-kb"
+
+[[env.production.durable_objects.bindings]]
+name = "ACCOUNT_AGENT"
+class_name = "AccountIntelAgent"
+
+[[env.production.durable_objects.bindings]]
+name = "ENABLEMENT_AGENT"
+class_name = "EnablementAgent"
+
+[[env.production.migrations]]
+tag = "v1"
+new_sqlite_classes = ["AccountIntelAgent", "EnablementAgent"]
+
+[env.production.ai]
+binding = "AI"

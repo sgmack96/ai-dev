@@ -1,0 +1,98 @@
+[
+  {
+    "id": "acc-001",
+    "agent": "account",
+    "role": "se",
+    "input": "Research Stripe — what is their tech stack and Cloudflare opportunity?",
+    "expected": {
+      "topics_covered": ["tech stack", "Cloudflare products", "migration opportunity"],
+      "tools_expected": ["kb_search"],
+      "max_latency_ms": 35000
+    },
+    "rubric": "Must identify at least 2 specific Cloudflare products relevant to a payments company (e.g. Workers, WAF, API Shield, Zero Trust). Should mention tech stack signals (AWS, GCP, or payment infrastructure). Must give a concrete migration or expansion angle — not just 'Cloudflare can help'. Should NOT invent specific dollar figures or contract values."
+  },
+  {
+    "id": "acc-002",
+    "agent": "account",
+    "role": "ae",
+    "input": "They use AWS Lambda, CloudFront, S3, and Auth0. What is our angle?",
+    "expected": {
+      "topics_covered": ["Workers vs Lambda", "CDN replacement", "Zero Trust or Access"],
+      "tools_expected": ["kb_search"],
+      "max_latency_ms": 35000
+    },
+    "rubric": "Must map each technology to a Cloudflare equivalent: Lambda→Workers, CloudFront→CDN, Auth0→Access. AE role means business framing is correct — ROI and outcomes, not deep technical implementation. Should NOT go into wrangler.toml configuration or Workers runtime limits (that is SE depth). Must give at least one concrete next step or talking point."
+  },
+  {
+    "id": "acc-003",
+    "agent": "account",
+    "role": "se",
+    "input": "Write 5 discovery questions for a SaaS startup on Azure",
+    "expected": {
+      "topics_covered": ["discovery questions", "Azure", "SaaS"],
+      "tools_expected": ["kb_search"],
+      "max_latency_ms": 35000
+    },
+    "rubric": "Must return exactly or approximately 5 distinct discovery questions. Questions must be specific to Azure infrastructure (not generic). Each question should open a door to a specific Cloudflare product or pain point — not generic sales questions like 'what are your priorities'. Questions should be ones a senior SE would actually ask, not ones from a generic sales training deck."
+  },
+  {
+    "id": "acc-004",
+    "agent": "account",
+    "role": "tam",
+    "input": "What is the latest news on Notion? I have a call tomorrow.",
+    "expected": {
+      "topics_covered": ["Notion", "recent events", "call preparation"],
+      "tools_expected": ["kb_search"],
+      "max_latency_ms": 40000
+    },
+    "rubric": "Must attempt to surface recent context about Notion (funding, product launches, incidents, leadership). TAM role means the framing should be about account health and expansion, not initial sale. Should give the rep something useful to open the call with — a current event angle, expansion opportunity, or risk signal. If no recent news is available, should say so honestly and pivot to preparation guidance."
+  },
+  {
+    "id": "acc-005",
+    "agent": "account",
+    "role": "csm",
+    "input": "Research Datadog — expansion opportunities for an existing customer",
+    "expected": {
+      "topics_covered": ["Datadog", "expansion", "existing customer"],
+      "tools_expected": ["kb_search"],
+      "max_latency_ms": 35000
+    },
+    "rubric": "CSM role means this is about expanding an EXISTING customer, not a new sale. Response must be framed around adoption and expansion, not initial migration. Should identify Cloudflare products Datadog might not already be using. Should NOT pitch products they almost certainly already have if they are an existing customer. Tone should be consultative, not sales-y."
+  },
+  {
+    "id": "acc-006",
+    "agent": "account",
+    "role": "ae",
+    "input": "Research Stripe",
+    "expected": {
+      "topics_covered": ["Stripe", "Cloudflare opportunity"],
+      "tools_expected": ["kb_search"],
+      "max_latency_ms": 35000
+    },
+    "rubric": "AE role — response must stay at business level. No Workers runtime configuration, no wrangler commands, no architecture diagrams. Must identify the top 2-3 Cloudflare value props for a payments company in business language. Shorter and more business-focused than the SE version (acc-001). If the response is longer than 400 words it is probably too deep for an AE."
+  },
+  {
+    "id": "acc-007",
+    "agent": "account",
+    "role": "se",
+    "input": "Prospect uses Fastly for CDN and Akamai for WAF. Competitive positioning for both?",
+    "expected": {
+      "topics_covered": ["Fastly", "Akamai", "competitive positioning", "CDN", "WAF"],
+      "tools_expected": ["kb_search"],
+      "max_latency_ms": 35000
+    },
+    "rubric": "Must address BOTH Fastly and Akamai separately — not a generic 'we are better' response. Should cite specific Cloudflare advantages over each: vs Fastly (full JS runtime vs Wasm-only, native security stack), vs Akamai (self-serve vs PS dependency, unified platform, pricing transparency). Must not make up Fastly or Akamai pricing. Should give a concrete wedge question or angle for each."
+  },
+  {
+    "id": "acc-008",
+    "agent": "account",
+    "role": "sales_manager",
+    "input": "Stripe deal is stalled at the VP level. What is the competitive risk from AWS and what is our counter?",
+    "expected": {
+      "topics_covered": ["deal strategy", "AWS competitive risk", "stalled deal"],
+      "tools_expected": ["kb_search"],
+      "max_latency_ms": 35000
+    },
+    "rubric": "Sales manager role — response should be deal strategy and coaching, not product specs. Must address the stall directly (who is the champion, what is the blocker) and give AWS-specific competitive counter-positioning. Should recommend a concrete action to unstick the deal. Should NOT spend most of the response explaining what Cloudflare Workers is — the manager knows the product."
+  }
+]
