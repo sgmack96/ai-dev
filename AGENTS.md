@@ -234,7 +234,35 @@ This is a living roadmap. I will continue building, learning, and expanding proj
 
 ## Active Projects
 
-*Starting fresh. Projects will be added here as they are built and deployed.*
+### 1. AI Technical Sales Co-Pilot
+- **Live URL:** https://ai-sales-copilot.stephenmack96.workers.dev
+- **Status:** Phase 4 shipped (Research + Architecture + Business Case + chaining)
+- **Stack:** Workers, Workers AI (Llama 3.3 70B), Vectorize (80 chunks), KV, D1, Hono
+- **Agents:** ResearchAgent, ArchitectureAgent, BusinessCaseAgent
+- **Chaining:** Architecture → Business Case reads prior output from session history (confidence 0.6 standalone → 0.8 chained)
+- **Pending:** Phase 5 (Chat UI)
+
+### 2. SE Intel — Multi-Agent Revenue Intelligence Platform
+- **Live URL:** https://se-intel-portfolio.stephenmack96.workers.dev
+- **Portfolio:** https://portfolio.macksportreport.com/projects/se-intel
+- **Blog:** https://portfolio.macksportreport.com/blog/se-intel-architecture
+- **Status:** v1.1 shipped — 3 agents, streaming, memory, eval harness (87% pass rate)
+- **Stack:** Workers, Durable Objects (SQLite), Workers AI (Llama 3.3 70B), Vectorize (102 chunks × 3 namespaces), KV (rate limit + long-term memory), D1 (audit log), Hono, JWT auth
+- **Agents:**
+  - `AccountIntelAgent` — real-time company research, tech stack analysis, deal strategy
+  - `EnablementAgent` — product Q&A, objection handling, POC guidance, competitive positioning
+  - `TranscriptAgent` — post-call transcript analysis, CRM-ready structured output
+- **Features:** Streaming SSE (token-by-token), long-term memory extraction (LLM → KV), role-aware depth rules
+- **KB namespaces:** `public` (80 product chunks), `se_only` (12 technical/competitive), `manager_only` (10 deal strategy/pricing)
+- **RBAC:** 5 roles (ae, se, csm, tam, sales_manager), JWT-gated, tool-level enforcement
+- **Eval harness:** 15 test cases, LLM-as-judge (4 dimensions), regression tracking, 87% pass rate (67% → 73% → 87% over 3 iterations)
+
+### 3. SE Intel MCP Server
+- **Location:** /Users/smack/ai-dev/projects/se-intel-mcp/
+- **Status:** Built, protocol verified, not yet connected to Claude Desktop
+- **Tools:** `research_account`, `get_enablement`, `get_memory`
+- **Stack:** @modelcontextprotocol/sdk, TypeScript, stdio transport
+- **Pending:** Connect to Claude Desktop, add `analyze_transcript` tool
 
 ---
 

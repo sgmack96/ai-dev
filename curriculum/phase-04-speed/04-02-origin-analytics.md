@@ -1,0 +1,547 @@
+# Module 4.2 — Origin Analytics
+> Dashboard Location: macksportreport.com → Speed → Origin Analytics | Estimated Time: 75 minutes | Lab Domain: macksportreport.com
+
+---
+
+## Theory (SE-Level)
+
+### What Is Origin Analytics?
+
+Origin Analytics surfaces performance data specifically from the perspective of your origin server — meaning: what does it actually cost Cloudflare to talk to your backend? This is distinct from what end users experience (that's RUM) and distinct from what a synthetic browser sees (that's Observatory). Origin Analytics answers: "How is my origin server performing?"
+
+The key question Origin Analytics answers: **Is the problem at the edge or at the origin?**
+
+When a user has a slow experience, there are two possible failure domains:
+1. **Cloudflare edge** — cache miss rates, routing, SSL handshake
+2. **Origin** — slow application server, overloaded database, slow TTFB from the backend
+
+Origin Analytics isolates #2. If origin TTFB is high, the fix is at the customer's stack (scale compute, optimize queries, add caching layers). If origin TTFB is fine but user experience is slow, the fix is in Cloudflare optimization features.
+
+### TTFB — Time to First Byte Explained
+
+TTFB measures the time from when Cloudflare sends a request to the origin until Cloudflare receives the **first byte** of the HTTP response.
+
+It does NOT include:
+- Client-to-Cloudflare network time
+- SSL/TLS handshake between client and Cloudflare
+- Client rendering time
+
+It DOES include:
+- DNS resolution to origin (if using hostname)
+- TCP connection to origin
+- SSL/TLS handshake with origin (if HTTPS to origin)
+- Time for origin to process the request (database queries, templating, API calls)
+- Time for first byte of response to travel from origin to Cloudflare edge
+
+**Why TTFB matters:** A high TTFB (> 500ms) is almost always an origin-side problem. Cloudflare cannot fix a slow origin — but it can cache the response so subsequent users don't hit the origin at all. TTFB is the strongest argument for aggressive caching.
+
+### The Cache Miss / Cache Hit Split
+
+Origin Analytics only shows data for **cache misses** — requests that actually reached your origin. If 90% of your traffic is served from CF cache (cache HITs), those 90% of requests never appear in Origin Analytics. This is by design.
+
+This creates a useful insight: **If origin analytics shows high TTFB but your users aren't complaining, your cache hit rate is probably high and protecting them.** Conversely, if origin analytics shows high TTFB AND users are complaining, your cache is either misconfigured or your content is inherently uncacheable.
+
+---
+
+## Deep Dive (Architect-Level)
+
+### Origin Response Time Components
+
+When Cloudflare connects to your origin, the time breaks down as follows:
+
+```
+[CF Edge] → TCP SYN → [Origin]
+           ← TCP SYN-ACK ←
+           → TCP ACK →
+           → TLS ClientHello → (if HTTPS to origin)
+           ← TLS ServerHello, Certificate ←
+           → HTTP GET /path →
+           ← HTTP 200 (first byte) ←
+           ← HTTP body (streaming) ←
+```
+
+Each phase contributes to TTFB:
+- **TCP connect time:** Should be < 10ms within same DC, can be 50–200ms cross-region
+- **TLS handshake:** 30–100ms for full handshake, ~1ms for session resumption
+- **Origin processing time:** Varies wildly — 50ms for a cached DB query, 2000ms+ for cold N+1 query
+
+### Reading the Histogram
+
+Origin Analytics presents response times as a histogram with buckets:
+- 0–100ms
+- 100–200ms
+- 200–500ms
+- 500ms–1s
+- 1s–2s
+- 2s+
+
+**Healthy profile:** Tall bar in 0–200ms range, rapidly falling off. Think power-law distribution.
+
+**Problematic profiles:**
+- **Bimodal distribution** (peaks at 100ms AND at 1s+): Two classes of requests — cached vs. uncached at origin, or healthy vs. degraded DB queries
+- **Flat distribution** (spread evenly 200ms–2s): Origin is consistently slow, likely DB or API bottleneck
+- **Heavy tail** (long 2s+ bucket): Some requests severely slow — could be specific endpoints, large queries, or occasional timeouts
+
+### Percentile Analysis
+
+Origin Analytics reports p50, p95, and p99. Understanding which to use when:
+
+| Percentile | What It Means | When to Use |
+|------------|---------------|-------------|
+| **p50 (median)** | Half of origin requests complete within this time | Baseline health check |
+| **p95** | 95% of requests complete within this time | SLA commitments, alerting thresholds |
+| **p99** | 99% of requests complete within this time | Catching outlier slow queries, tail latency |
+
+**SE rule of thumb:** 
+- p50 > 500ms → origin is uniformly slow, needs optimization
+- p95 > 1s → 5% of users getting bad experience, likely specific slow endpoints
+- p99 > 2s → occasional severe issues, could be GC pauses, lock contention, cold starts
+
+### 5xx Error Rate From Origin
+
+Origin Analytics surfaces 5xx errors specifically from the origin (502, 503, 504 etc.), separate from errors generated by Cloudflare itself.
+
+- **502 Bad Gateway** — Origin returned an invalid response (crashed, misconfigured)
+- **503 Service Unavailable** — Origin is down or overloaded
+- **504 Gateway Timeout** — Origin didn't respond within CF's timeout window (default: 100 seconds)
+
+Seeing 5xx errors in Origin Analytics means your origin is generating them — Cloudflare is not. This is the customer's code/infrastructure problem.
+
+**Important distinction:** If Cloudflare returns a 5xx but it doesn't appear in Origin Analytics, Cloudflare itself is the source (e.g., CF returning 521 because origin TCP connection refused, which shows as a CF error, not an origin response).
+
+### Origin Health Degradation Patterns
+
+**Pattern 1: Gradual latency creep**
+- p50 slowly rises over hours/days
+- Cause: Memory leak, connection pool exhaustion, log file filling disk
+- Detection: Plot p50 trend, set alert on p95 > threshold
+
+**Pattern 2: Traffic-correlated spikes**
+- Latency spikes during peak traffic periods
+- Cause: Origin undersized for load, DB query scaling poorly
+- Detection: Correlate origin analytics with request count (Firewall Analytics)
+
+**Pattern 3: Regional latency disparity**
+- Some edge locations show high origin TTFB, others don't
+- Cause: Origin in one region (e.g., US-East), CF nodes in Asia have high physical latency to reach it
+- Solution: Argo Smart Routing, Tiered Caching, or origin replication
+
+**Pattern 4: Sudden spike then recovery**
+- Sharp spike to 2s+ for 5–10 minutes, then returns to normal
+- Cause: Deployment, GC pause, cache invalidation stampede (thundering herd)
+- Detection: Correlate with deployment events
+
+### How Caching Changes the Origin Analytics Picture
+
+With caching enabled, origin analytics becomes a story about your "long tail" of dynamic requests:
+
+```
+Total requests: 100,000
+Cache HIT (served from CF): 85,000  → invisible in Origin Analytics
+Cache MISS (forwarded to origin): 15,000 → visible in Origin Analytics
+```
+
+This means origin analytics is biased toward:
+- Dynamic pages (uncacheable by default)
+- First requests before TTL is established
+- Requests that bypass cache (cookies, POST, auth headers)
+- Cache-busted requests
+
+**Architect insight:** If you see high origin TTFB in Origin Analytics but users have good experience, it's because your cache is protecting them. Document this as your ROI story: "Before caching, all 100K requests hit origin at 800ms TTFB. Now 85K are served at <50ms from CF cache, and only 15K hit your (slow) origin."
+
+### Using Origin Analytics to Make the Case for Caching
+
+This is the core SE play. The workflow:
+
+1. Check origin p95 TTFB (say it's 900ms)
+2. Check cache hit rate in Caching analytics (say it's 30%)
+3. Show cost: 70% of requests × 900ms = users waiting
+4. Recommend: Cache Rules to increase cache TTL for static assets/HTML
+5. Show expected result: cache hit rate → 80%, only 20% of requests hit slow origin
+6. Quantify: 60% fewer origin requests = lower server load + faster user experience
+
+---
+
+## Dashboard Walkthrough
+
+### Step 1: Navigate to Origin Analytics
+```
+macksportreport.com → Speed (left nav) → Origin Analytics
+```
+
+### Step 2: Set Time Range
+- Top right time selector: Last 30 minutes, 6 hours, 24 hours, 7 days, 30 days
+- For debugging: use 30 minutes or 6 hours to see current state
+- For trends: use 7 days or 30 days
+
+### Step 3: Read the TTFB Summary Cards
+- **Average TTFB** — overall mean (affected by outliers)
+- **p50 TTFB** — median, most useful for "typical" experience
+- **p95 TTFB** — "worst 5%" marker
+- **Request count** — how many origin requests in the window
+
+### Step 4: Analyze the Response Time Histogram
+- Hover over histogram bars to see exact counts
+- Look for bimodal distribution (indicates two classes of requests)
+- Look for heavy tail (p99 much higher than p95)
+
+### Step 5: Check Origin Error Rate
+- Error rate card shows % of origin responses that were 5xx
+- Click to filter the histogram to show only error responses
+- Use this to determine if errors are consistent or occasional
+
+### Step 6: Break Down by Endpoint (if available)
+- Some plans show breakdown by URL path
+- Identify which endpoints are slowest
+- Prioritize optimization: fix the highest-traffic slow endpoint first
+
+---
+
+## Hands-On Lab
+
+### Prerequisites
+- macksportreport.com on Cloudflare
+- API token with Zone Analytics:Read permission
+
+### Lab 1: Query Origin Analytics via API
+
+```bash
+export CF_API_TOKEN="your_api_token_here"
+export ZONE_ID="your_zone_id_here"
+
+# Fetch origin TTFB data using GraphQL Analytics API
+curl -s -X POST "https://api.cloudflare.com/client/v4/graphql" \
+  -H "Authorization: Bearer $CF_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "
+      query {
+        viewer {
+          zones(filter: { zoneTag: \"'$ZONE_ID'\" }) {
+            httpRequestsAdaptiveGroups(
+              filter: {
+                datetime_gt: \"2024-01-01T00:00:00Z\",
+                datetime_lt: \"2024-01-02T00:00:00Z\",
+                cacheStatus_nin: [\"hit\", \"stale\", \"revalidated\", \"updating\", \"ignored\"]
+              }
+              limit: 1000
+              orderBy: [count_DESC]
+            ) {
+              count
+              avg {
+                originResponseDurationMs
+              }
+              quantiles {
+                originResponseDurationMsP50
+                originResponseDurationMsP95
+                originResponseDurationMsP99
+              }
+            }
+          }
+        }
+      }
+    "
+  }' | jq '.data.viewer.zones[0].httpRequestsAdaptiveGroups[] | {
+    requests: .count,
+    avg_ttfb_ms: .avg.originResponseDurationMs,
+    p50_ms: .quantiles.originResponseDurationMsP50,
+    p95_ms: .quantiles.originResponseDurationMsP95,
+    p99_ms: .quantiles.originResponseDurationMsP99
+  }'
+```
+
+### Lab 2: Calculate Your Cache Hit Rate (Context for Origin Analytics)
+
+```bash
+# Get cache status breakdown to understand what fraction hits origin
+curl -s -X POST "https://api.cloudflare.com/client/v4/graphql" \
+  -H "Authorization: Bearer $CF_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "
+      query {
+        viewer {
+          zones(filter: { zoneTag: \"'$ZONE_ID'\" }) {
+            httpRequestsAdaptiveGroups(
+              filter: {
+                datetime_gt: \"2024-01-01T00:00:00Z\",
+                datetime_lt: \"2024-01-02T00:00:00Z\"
+              }
+              limit: 100
+              orderBy: [count_DESC]
+            ) {
+              count
+              dimensions {
+                cacheStatus
+              }
+            }
+          }
+        }
+      }
+    "
+  }' | jq '.data.viewer.zones[0].httpRequestsAdaptiveGroups | group_by(.dimensions.cacheStatus) | map({status: .[0].dimensions.cacheStatus, total: map(.count) | add})'
+```
+
+### Lab 3: Identify Slowest Endpoints at the Origin
+
+```bash
+# Get p95 TTFB grouped by URL path (shows which pages are slow at origin)
+curl -s -X POST "https://api.cloudflare.com/client/v4/graphql" \
+  -H "Authorization: Bearer $CF_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "
+      query {
+        viewer {
+          zones(filter: { zoneTag: \"'$ZONE_ID'\" }) {
+            httpRequestsAdaptiveGroups(
+              filter: {
+                datetime_gt: \"2024-01-01T00:00:00Z\",
+                datetime_lt: \"2024-01-08T00:00:00Z\",
+                cacheStatus_nin: [\"hit\", \"stale\"]
+              }
+              limit: 20
+              orderBy: [quantiles_originResponseDurationMsP95_DESC]
+            ) {
+              count
+              dimensions {
+                clientRequestPath
+              }
+              quantiles {
+                originResponseDurationMsP95
+              }
+            }
+          }
+        }
+      }
+    "
+  }' | jq '.data.viewer.zones[0].httpRequestsAdaptiveGroups[] | {
+    path: .dimensions.clientRequestPath,
+    requests: .count,
+    p95_ms: .quantiles.originResponseDurationMsP95
+  }'
+```
+
+### Lab 4: Check 5xx Origin Error Rate
+
+```bash
+# Get error rate from origin
+curl -s -X POST "https://api.cloudflare.com/client/v4/graphql" \
+  -H "Authorization: Bearer $CF_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "
+      query {
+        viewer {
+          zones(filter: { zoneTag: \"'$ZONE_ID'\" }) {
+            httpRequestsAdaptiveGroups(
+              filter: {
+                datetime_gt: \"2024-01-01T00:00:00Z\",
+                datetime_lt: \"2024-01-08T00:00:00Z\",
+                originResponseStatus_geq: 500,
+                cacheStatus_nin: [\"hit\", \"stale\"]
+              }
+              limit: 100
+              orderBy: [count_DESC]
+            ) {
+              count
+              dimensions {
+                originResponseStatus
+                clientRequestPath
+              }
+            }
+          }
+        }
+      }
+    "
+  }' | jq '.data.viewer.zones[0].httpRequestsAdaptiveGroups[] | {
+    status: .dimensions.originResponseStatus,
+    path: .dimensions.clientRequestPath,
+    count: .count
+  }'
+```
+
+### Lab 5: Build an Origin Health Dashboard (Bash Script)
+
+```bash
+#!/bin/bash
+# origin-health-check.sh — Quick origin health snapshot
+
+CF_API_TOKEN="${CF_API_TOKEN}"
+ZONE_ID="${ZONE_ID}"
+HOURS="${1:-24}"  # Default: last 24 hours
+
+START=$(date -u -v-${HOURS}H +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date -u --date="${HOURS} hours ago" +"%Y-%m-%dT%H:%M:%SZ")
+END=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+echo "=== Origin Health Check ==="
+echo "Zone: $ZONE_ID"
+echo "Window: Last ${HOURS} hours ($START → $END)"
+echo ""
+
+RESULT=$(curl -s -X POST "https://api.cloudflare.com/client/v4/graphql" \
+  -H "Authorization: Bearer $CF_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"query\": \"query { viewer { zones(filter: { zoneTag: \\\"$ZONE_ID\\\" }) { httpRequestsAdaptiveGroups(filter: { datetime_gt: \\\"$START\\\", datetime_lt: \\\"$END\\\", cacheStatus_nin: [\\\"hit\\\", \\\"stale\\\"] }, limit: 1000, orderBy: [count_DESC]) { count avg { originResponseDurationMs } quantiles { originResponseDurationMsP50 originResponseDurationMsP95 originResponseDurationMsP99 } } } } }\"
+  }")
+
+echo "$RESULT" | jq '.data.viewer.zones[0].httpRequestsAdaptiveGroups[0] | {
+  "Total Origin Requests": .count,
+  "Avg TTFB (ms)": (.avg.originResponseDurationMs | round),
+  "p50 TTFB (ms)": .quantiles.originResponseDurationMsP50,
+  "p95 TTFB (ms)": .quantiles.originResponseDurationMsP95,
+  "p99 TTFB (ms)": .quantiles.originResponseDurationMsP99
+}'
+
+# Health assessment
+P95=$(echo "$RESULT" | jq '.data.viewer.zones[0].httpRequestsAdaptiveGroups[0].quantiles.originResponseDurationMsP95 // 0')
+echo ""
+if (( $(echo "$P95 > 1000" | bc -l) )); then
+  echo "⚠️  STATUS: DEGRADED — p95 TTFB > 1 second. Investigate origin performance."
+elif (( $(echo "$P95 > 500" | bc -l) )); then
+  echo "⚡ STATUS: FAIR — p95 TTFB 500ms–1s. Consider caching strategy."
+else
+  echo "✅ STATUS: HEALTHY — p95 TTFB under 500ms."
+fi
+```
+
+```bash
+chmod +x origin-health-check.sh
+./origin-health-check.sh 6   # Last 6 hours
+./origin-health-check.sh 24  # Last 24 hours
+```
+
+---
+
+## Demo Script (2 Minutes)
+
+**Audience:** Engineering team or DevOps lead
+
+---
+
+**[0:00 – 0:20] Setup the Question**
+
+"Your users are experiencing slow page loads. I want to show you a tool that tells us precisely whether the problem is at your origin server or somewhere else in the chain. This distinction matters because the fix is completely different."
+
+*Navigate to: macksportreport.com → Speed → Origin Analytics*
+
+---
+
+**[0:20 – 0:50] Read the Dashboard**
+
+"This is your origin TTFB — Time to First Byte. This measures how long Cloudflare waits for your server to respond. Your p50 is [X]ms. That's your typical request. Your p95 is [Y]ms — that's the experience your worst 5% of users are having."
+
+*Point to histogram.*
+
+"See this distribution? I want your p50 to be under 200ms and p95 under 500ms. What I'm seeing is [describe the actual shape]."
+
+---
+
+**[0:50 – 1:30] Make the Case for Caching**
+
+"Here's the key insight. These numbers only reflect cache MISS requests — requests that actually reached your server. Right now your cache hit rate is [Z]%. That means [100-Z]% of your traffic is hitting your origin at [p50]ms TTFB."
+
+"If we get your cache hit rate from [Z]% to 80% with some Cache Rules, that p95 TTFB — whatever it is — suddenly affects only 20% of requests instead of [100-Z]%. The user experience improvement is dramatic, and your server load drops by [100-Z - 20]%."
+
+---
+
+**[1:30 – 2:00] Next Steps**
+
+"Two things I want to do with you today: First, add a Cache Rule to cache your static pages for 4 hours. Second, set up an alert to notify you if origin p95 TTFB exceeds 1 second for more than 5 minutes. Both are a 2-minute configuration. Ready?"
+
+---
+
+## Competitive Context
+
+| Dimension | Cloudflare Origin Analytics | AWS CloudWatch (ALB metrics) | Datadog APM | New Relic |
+|-----------|---------------------------|------------------------------|-------------|-----------|
+| **Where data comes from** | CF edge observing origin responses | Load balancer metrics | Agent in app | Agent in app |
+| **Setup required** | Zero — auto-captured | Minimal (enable detailed metrics) | Agent install + instrumentation | Agent install |
+| **Latency granularity** | p50, p95, p99 | p50, p75, p95, p99 | Full distribution | Full distribution |
+| **Correlated with CDN** | Yes — cache hit/miss context | No | No | No |
+| **Error attribution** | Origin 5xx vs CF errors | Origin errors only | Full stack | Full stack |
+| **Cost** | Included in CF plan | $0.01/metric/month | $$$$ per host | $$$$ per host |
+| **Root cause depth** | No — surface level | No | Yes — traces | Yes — traces |
+| **Best for** | CDN-layer performance visibility | AWS-native environments | Deep app debugging | Deep app debugging |
+
+**SE Positioning:** Origin Analytics isn't trying to replace APM. It's the layer between Cloudflare and your origin — it gives you the CDN-perspective view that Datadog simply cannot see. Use both: Datadog for root cause inside your app, Origin Analytics for the question "is my CDN configuration making origin problems better or worse?"
+
+---
+
+## Self-Check Questions
+
+**Instructions:** Answer each question without referring to your notes.
+
+---
+
+**Q1.** A customer's Origin Analytics shows p95 TTFB of 1,200ms. Their RUM data shows p95 LCP of 800ms. How is that possible? What does it tell you?
+
+```
+Your answer:
+
+
+
+
+```
+
+---
+
+**Q2.** Explain why Origin Analytics only reflects cache MISS requests. Why is this useful when making the case for more aggressive caching?
+
+```
+Your answer:
+
+
+
+
+```
+
+---
+
+**Q3.** You're looking at an origin response time histogram and you see a bimodal distribution with one peak at 100ms and another at 1,500ms. What two hypotheses would you investigate first?
+
+```
+Your answer:
+
+
+
+
+```
+
+---
+
+**Q4.** What is the difference between a 502 and a 504 error from the origin's perspective? How does this guide your troubleshooting?
+
+```
+Your answer:
+
+
+
+
+```
+
+---
+
+**Q5.** A customer asks: "If Cloudflare is a CDN and it caches my content, why is my TTFB still slow for logged-in users?" How do you answer this?
+
+```
+Your answer:
+
+
+
+
+```
+
+---
+
+## Sources
+
+- [Cloudflare Speed — Origin Analytics](https://developers.cloudflare.com/speed/origin-analytics/)
+- [Cloudflare GraphQL Analytics API](https://developers.cloudflare.com/analytics/graphql-api/)
+- [Time to First Byte (TTFB) — web.dev](https://web.dev/ttfb/)
+- [Cloudflare Cache Analytics](https://developers.cloudflare.com/cache/performance-review/cache-analytics/)
+- [Cloudflare Cache Rules](https://developers.cloudflare.com/cache/how-to/cache-rules/)
+- [Argo Smart Routing](https://developers.cloudflare.com/argo-smart-routing/)
+- [Cloudflare Tiered Cache](https://developers.cloudflare.com/cache/how-to/tiered-cache/)
+- [HTTP Response Status Codes — MDN](https://developer.mozilla.org/en-US/docs/Web/HTTP/Status)
