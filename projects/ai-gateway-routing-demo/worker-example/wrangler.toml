@@ -1,0 +1,18 @@
+name = "ai-gateway-routing-demo"
+main = "src/index.ts"
+compatibility_date = "2024-09-23"
+workers_dev = true
+
+# Secrets — set these before deploying:
+#
+#   wrangler secret put CF_AIG_TOKEN
+#   wrangler secret put ACCOUNT_ID
+#   wrangler secret put GATEWAY_ID
+#
+# CF_AIG_TOKEN : your AI Gateway auth token (from gateway Settings > Auth)
+# ACCOUNT_ID   : your Cloudflare account ID
+# GATEWAY_ID   : your AI Gateway name/ID
+#
+# Note: This Worker does NOT need Workers AI binding — all inference
+# happens through AI Gateway. The gateway handles the Workers AI calls
+# using its own internal routing.

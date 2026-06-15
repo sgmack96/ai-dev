@@ -1,0 +1,151 @@
+{
+  "name": "engineering",
+  "description": "Routes engineering team AI requests by workflow type. Frontier models for reasoning tasks, cheap models for summarization. Per-team budget limit with graceful fallback.",
+  "elements": [
+    {
+      "id": "node_start",
+      "type": "start",
+      "outputs": {
+        "next": { "elementId": "node_cond_code_review" }
+      }
+    },
+
+    {
+      "id": "node_cond_code_review",
+      "type": "conditional",
+      "properties": {
+        "conditions": {
+          "metadata.workflow": { "$eq": "code_review" }
+        }
+      },
+      "outputs": {
+        "true":  { "elementId": "node_model_gpt41_review" },
+        "false": { "elementId": "node_cond_meeting_prep" }
+      }
+    },
+
+    {
+      "id": "node_model_gpt41_review",
+      "type": "model",
+      "properties": {
+        "provider": "openai",
+        "model": "gpt-4.1",
+        "timeout": 60000,
+        "retries": 2
+      },
+      "outputs": {
+        "success":  { "elementId": "node_end" },
+        "fallback": { "elementId": "node_model_gpt4o_mini_fallback" }
+      }
+    },
+
+    {
+      "id": "node_cond_meeting_prep",
+      "type": "conditional",
+      "properties": {
+        "conditions": {
+          "metadata.workflow": { "$eq": "meeting_prep" }
+        }
+      },
+      "outputs": {
+        "true":  { "elementId": "node_model_gpt4o_mini_meeting" },
+        "false": { "elementId": "node_cond_incident_triage" }
+      }
+    },
+
+    {
+      "id": "node_model_gpt4o_mini_meeting",
+      "type": "model",
+      "properties": {
+        "provider": "openai",
+        "model": "gpt-4o-mini",
+        "timeout": 30000,
+        "retries": 2
+      },
+      "outputs": {
+        "success":  { "elementId": "node_end" },
+        "fallback": { "elementId": "node_model_llama_8b" }
+      }
+    },
+
+    {
+      "id": "node_cond_incident_triage",
+      "type": "conditional",
+      "properties": {
+        "conditions": {
+          "metadata.workflow": { "$eq": "incident_triage" }
+        }
+      },
+      "outputs": {
+        "true":  { "elementId": "node_model_gpt41_triage" },
+        "false": { "elementId": "node_budget_limit" }
+      }
+    },
+
+    {
+      "id": "node_model_gpt41_triage",
+      "type": "model",
+      "properties": {
+        "provider": "openai",
+        "model": "gpt-4.1",
+        "timeout": 60000,
+        "retries": 2
+      },
+      "outputs": {
+        "success":  { "elementId": "node_end" },
+        "fallback": { "elementId": "node_model_gpt4o_mini_fallback" }
+      }
+    },
+
+    {
+      "id": "node_budget_limit",
+      "type": "rate",
+      "properties": {
+        "limitType": "cost",
+        "key": "metadata.team",
+        "limit": 10,
+        "window": 86400
+      },
+      "outputs": {
+        "success":  { "elementId": "node_model_llama_8b" },
+        "fallback": { "elementId": "node_model_gpt4o_mini_fallback" }
+      }
+    },
+
+    {
+      "id": "node_model_llama_8b",
+      "type": "model",
+      "properties": {
+        "provider": "workers-ai",
+        "model": "@cf/meta/llama-3.1-8b-instruct",
+        "timeout": 30000,
+        "retries": 1
+      },
+      "outputs": {
+        "success":  { "elementId": "node_end" },
+        "fallback": { "elementId": "node_model_gpt4o_mini_fallback" }
+      }
+    },
+
+    {
+      "id": "node_model_gpt4o_mini_fallback",
+      "type": "model",
+      "properties": {
+        "provider": "openai",
+        "model": "gpt-4o-mini",
+        "timeout": 30000,
+        "retries": 2
+      },
+      "outputs": {
+        "success":  { "elementId": "node_end" },
+        "fallback": { "elementId": "node_end" }
+      }
+    },
+
+    {
+      "id": "node_end",
+      "type": "end",
+      "outputs": {}
+    }
+  ]
+}
