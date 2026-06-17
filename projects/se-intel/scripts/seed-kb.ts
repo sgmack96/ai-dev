@@ -48,6 +48,7 @@ export async function getAllChunks(): Promise<SeedChunk[]> {
       namespace: "public",
       metadata: {
         namespace: "public",
+        orgId: "global", // universal product knowledge — every tenant is entitled to it
         productName: chunk.metadata.product,
         category: chunk.metadata.category,
         type: chunk.metadata.type,
@@ -68,6 +69,7 @@ export async function getAllChunks(): Promise<SeedChunk[]> {
       namespace: "se_only",
       metadata: {
         namespace: "se_only",
+        orgId: "global", // universal SE knowledge — tenant-agnostic, role-gated only
         topic: chunk.metadata.topic,
         type: chunk.metadata.type,
         keywords: chunk.metadata.keywords,
@@ -87,9 +89,43 @@ export async function getAllChunks(): Promise<SeedChunk[]> {
       namespace: "manager_only",
       metadata: {
         namespace: "manager_only",
+        orgId: "global", // universal manager knowledge — tenant-agnostic, role-gated only
         topic: chunk.metadata.topic,
         type: chunk.metadata.type,
         keywords: chunk.metadata.keywords,
+        content: chunk.text,
+      },
+    });
+  }
+
+  // ── Test tenant: "acme" private chunks ───────────────────────────────────────
+  // Tenant-private knowledge, NOT global. Used to prove cross-org isolation:
+  // a query from org "portfolio-org" must NEVER return these. namespace "public"
+  // so the ROLE gate doesn't mask the test — isolation here is purely the TENANT gate.
+  const acmePrivateChunks: Array<{ id: string; text: string }> = [
+    {
+      id: "acme_discount",
+      text: "Acme Corp internal: our negotiated Cloudflare discount is 35% off list price, approved through 2027. Do not share externally.",
+    },
+    {
+      id: "acme_deal",
+      text: "Acme Corp internal: migration deadline is Q3, CTO is Jane Doe, primary blocker is a legacy Akamai contract expiring in August.",
+    },
+    {
+      id: "acme_security",
+      text: "Acme Corp internal — confidential: our last security audit flagged three open WAF gaps on the checkout service. Remediation in progress.",
+    },
+  ];
+  for (const chunk of acmePrivateChunks) {
+    chunks.push({
+      id: `acme_${chunk.id}`,
+      text: chunk.text,
+      namespace: "public",
+      metadata: {
+        namespace: "public",
+        orgId: "acme", // tenant-private — only org "acme" may retrieve these
+        type: "tenant_private",
+        keywords: "acme internal confidential",
         content: chunk.text,
       },
     });

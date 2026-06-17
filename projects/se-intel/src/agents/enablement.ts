@@ -129,6 +129,7 @@ User: ${userContext.name} (${userContext.role.toUpperCase()} at org: ${userConte
     const kbResult = await kbSearch(
       message,
       userContext.role,
+      userContext.orgId,
       this.env,
       toolCalls,
       namespace
@@ -145,6 +146,7 @@ User: ${userContext.name} (${userContext.role.toUpperCase()} at org: ${userConte
       const webResult = await webSearch(
         `Cloudflare ${message}`,
         userContext.role,
+        userContext.orgId,
         this.env,
         toolCalls
       );

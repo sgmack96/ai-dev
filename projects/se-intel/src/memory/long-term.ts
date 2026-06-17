@@ -12,7 +12,7 @@
  * - "Working on Stripe account (Series C, 200 engineers)"
  * - "Has an upcoming QBR with Notion on June 15"
  *
- * Key format: `ltm:{userId}:{factId}`
+ * Key format: `ltm:{orgId}:{userId}:{factId}`
  * We cap at MAX_FACTS per user — oldest facts are evicted when limit is reached.
  *
  * Why KV and not DO SQLite?
@@ -43,19 +43,21 @@ export interface MemoryFact {
 
 export class LongTermMemory {
   private userId: string;
+  private orgId: string;
   private kv: KVNamespace;
 
-  constructor(userId: string, env: Env) {
+  constructor(userId: string, orgId: string, env: Env) {
     this.userId = userId;
+    this.orgId = orgId;
     this.kv = env.USER_MEMORY_KV;
   }
 
   private indexKey(): string {
-    return `ltm:${this.userId}:__index`;
+    return `ltm:${this.orgId}:${this.userId}:__index`;
   }
 
   private factKey(factId: string): string {
-    return `ltm:${this.userId}:${factId}`;
+    return `ltm:${this.orgId}:${this.userId}:${factId}`;
   }
 
   /**

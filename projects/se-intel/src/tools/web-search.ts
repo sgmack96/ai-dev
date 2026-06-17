@@ -129,6 +129,7 @@ async function duckDuckGoSearch(query: string): Promise<WebSearchResult[]> {
 export async function webSearch(
   query: string,
   role: Role,
+  orgId: string,
   env: Env,
   toolCalls: ToolCall[]
 ): Promise<string | null> {
@@ -144,7 +145,8 @@ export async function webSearch(
         const durationMs = Date.now() - start;
         toolCalls.push({
           toolName: "web_search",
-          args: { query, role },
+          orgId,
+          args: { query, role, orgId },
           result: { count: webResults.length, source: "duckduckgo" },
           durationMs,
         });
@@ -166,7 +168,7 @@ export async function webSearch(
 
   // ── KB fallback ──────────────────────────────────────────────────────────────
   // Either no web access, or web search returned nothing.
-  const kbResult = await kbSearch(query, role, env, toolCalls);
+  const kbResult = await kbSearch(query, role, orgId, env, toolCalls);
   if (kbResult) {
     return `[Web search unavailable — using knowledge base]\n\n${kbResult}`;
   }

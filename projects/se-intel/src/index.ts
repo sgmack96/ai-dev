@@ -26,6 +26,7 @@ import { extractUserContext, generateDevToken } from "./auth/context.js";
 import { checkRateLimit } from "./auth/ratelimit.js";
 import { getUIHtml } from "./ui.js";
 import { LongTermMemory } from "./memory/long-term.js";
+import { kbSearchRaw } from "./tools/kb-search.js";
 import type { Env, Role } from "./types/index.js";
 
 // Re-export DO classes so wrangler can find them
@@ -171,7 +172,7 @@ app.post("/api/v1/account", async (c) => {
   const tid = threadId ?? crypto.randomUUID();
 
   // Get (or create) DO stub for this user
-  const doId = c.env.ACCOUNT_AGENT.idFromName(userContext!.userId);
+  const doId = c.env.ACCOUNT_AGENT.idFromName(`${userContext!.orgId}:${userContext!.userId}`);
   const stub = c.env.ACCOUNT_AGENT.get(doId);
 
   // Forward to DO
@@ -207,7 +208,7 @@ app.post("/api/v1/enablement", async (c) => {
 
   const tid = threadId ?? crypto.randomUUID();
 
-  const doId = c.env.ENABLEMENT_AGENT.idFromName(userContext!.userId);
+  const doId = c.env.ENABLEMENT_AGENT.idFromName(`${userContext!.orgId}:${userContext!.userId}`);
   const stub = c.env.ENABLEMENT_AGENT.get(doId);
 
   const doResp = await stub.fetch(
@@ -243,7 +244,7 @@ app.post("/api/v1/account/stream", async (c) => {
   }
 
   const tid = threadId ?? crypto.randomUUID();
-  const doId = c.env.ACCOUNT_AGENT.idFromName(userContext!.userId);
+  const doId = c.env.ACCOUNT_AGENT.idFromName(`${userContext!.orgId}:${userContext!.userId}`);
   const stub = c.env.ACCOUNT_AGENT.get(doId);
 
   // Forward to DO /stream — pass the response straight through (don't buffer)
@@ -286,7 +287,7 @@ app.post("/api/v1/transcript", async (c) => {
   }
 
   const tid = threadId ?? crypto.randomUUID();
-  const doId = c.env.TRANSCRIPT_AGENT.idFromName(userContext!.userId);
+  const doId = c.env.TRANSCRIPT_AGENT.idFromName(`${userContext!.orgId}:${userContext!.userId}`);
   const stub = c.env.TRANSCRIPT_AGENT.get(doId);
 
   const doResp = await stub.fetch(
@@ -320,7 +321,7 @@ app.post("/api/v1/transcript/stream", async (c) => {
   }
 
   const tid = threadId ?? crypto.randomUUID();
-  const doId = c.env.TRANSCRIPT_AGENT.idFromName(userContext!.userId);
+  const doId = c.env.TRANSCRIPT_AGENT.idFromName(`${userContext!.orgId}:${userContext!.userId}`);
   const stub = c.env.TRANSCRIPT_AGENT.get(doId);
 
   const doResp = await stub.fetch(
@@ -361,7 +362,7 @@ app.post("/api/v1/enablement/stream", async (c) => {
   }
 
   const tid = threadId ?? crypto.randomUUID();
-  const doId = c.env.ENABLEMENT_AGENT.idFromName(userContext!.userId);
+  const doId = c.env.ENABLEMENT_AGENT.idFromName(`${userContext!.orgId}:${userContext!.userId}`);
   const stub = c.env.ENABLEMENT_AGENT.get(doId);
 
   const doResp = await stub.fetch(
@@ -391,7 +392,7 @@ app.get("/api/v1/memory", async (c) => {
     ReturnType<typeof extractUserContext>
   >;
 
-  const ltm = new LongTermMemory(userContext!.userId, c.env);
+  const ltm = new LongTermMemory(userContext!.userId, userContext!.orgId, c.env);
   const facts = await ltm.recall();
 
   return c.json({
@@ -427,7 +428,7 @@ app.get("/api/v1/history/:agent", async (c) => {
       : agent === "enablement"
         ? c.env.ENABLEMENT_AGENT
         : c.env.TRANSCRIPT_AGENT;
-  const doId = ns.idFromName(userContext!.userId);
+  const doId = ns.idFromName(`${userContext!.orgId}:${userContext!.userId}`);
   const stub = ns.get(doId);
 
   const url = new URL("https://do-internal/history");
@@ -489,6 +490,134 @@ app.get("/admin/seed/status", async (c) => {
   }
 });
 
+// ── Admin: KB isolation probe ─────────────────────────────────────────────────
+// Deterministic multi-tenancy test. Runs the REAL retrieval path (kbSearchRaw)
+// and returns the raw chunks with their orgId — NO LLM in the path, so the
+// result can't be masked by hallucination. Used to prove cross-org isolation.
+//   curl -X POST .../admin/kb-probe -H "Authorization: Bearer <SECRET>" \
+//     -d '{"query":"negotiated discount","role":"se","orgId":"acme"}'
+app.post("/admin/kb-probe", async (c) => {
+  const secret = c.env.JWT_SECRET;
+  if (secret) {
+    const auth = c.req.header("Authorization");
+    if (!auth || auth !== `Bearer ${secret}`) {
+      return c.json({ error: "Unauthorized" }, { status: 401 });
+    }
+  }
+
+  let body: { query?: string; role?: string; orgId?: string };
+  try {
+    body = (await c.req.json()) as typeof body;
+  } catch {
+    return c.json({ error: "Invalid JSON" }, { status: 400 });
+  }
+
+  const { query, role, orgId } = body;
+  if (!query || !role || !orgId) {
+    return c.json({ error: "Required: query, role, orgId" }, { status: 400 });
+  }
+
+  const validRoles: Role[] = ["ae", "se", "csm", "tam", "sales_manager"];
+  if (!validRoles.includes(role as Role)) {
+    return c.json({ error: `role must be one of: ${validRoles.join(", ")}` }, { status: 400 });
+  }
+
+  const results = await kbSearchRaw(query, role as Role, orgId, c.env);
+
+  // Surface exactly what the filter returned, plus a leak check:
+  // any returned chunk whose orgId is neither the caller's org nor "global" is a leak.
+  const foreignChunks = results.filter((r) => r.orgId !== orgId && r.orgId !== "global");
+
+  return c.json({
+    query,
+    role,
+    orgId,
+    matchCount: results.length,
+    isolationOk: foreignChunks.length === 0,
+    leakedChunks: foreignChunks.length,
+    matches: results.map((r) => ({
+      orgId: r.orgId,
+      namespace: r.namespace,
+      score: Number(r.score.toFixed(3)),
+      preview: r.content.slice(0, 80),
+    })),
+  });
+});
+
+// ── Admin: Memory isolation probe ─────────────────────────────────────────────
+// Deterministic multi-tenancy test for long-term memory (KV).
+// Writes a test fact as orgA/user, then reads as orgB/user — asserts 0 facts.
+// No LLM involved — same principle as /admin/kb-probe.
+//   curl -X POST .../admin/memory-probe -H "Authorization: Bearer <SECRET>" \
+//     -d '{"userId":"probe-user","orgA":"acme","orgB":"portfolio-org"}'
+app.post("/admin/memory-probe", async (c) => {
+  const secret = c.env.JWT_SECRET;
+  if (secret) {
+    const auth = c.req.header("Authorization");
+    if (!auth || auth !== `Bearer ${secret}`) {
+      return c.json({ error: "Unauthorized" }, { status: 401 });
+    }
+  }
+
+  let body: { userId?: string; orgA?: string; orgB?: string };
+  try {
+    body = (await c.req.json()) as typeof body;
+  } catch {
+    return c.json({ error: "Invalid JSON" }, { status: 400 });
+  }
+
+  const { userId, orgA, orgB } = body;
+  if (!userId || !orgA || !orgB) {
+    return c.json({ error: "Required: userId, orgA, orgB" }, { status: 400 });
+  }
+  if (orgA === orgB) {
+    return c.json({ error: "orgA and orgB must be different" }, { status: 400 });
+  }
+
+  // Step 1: Write a test fact under orgA
+  const ltmA = new LongTermMemory(userId, orgA, c.env);
+  const testFact = await ltmA.remember({
+    content: `[PROBE] test fact for ${orgA} at ${Date.now()}`,
+    source: "agent_inferred",
+  });
+
+  // Step 2: Read facts under orgA — should find the test fact
+  const factsA = await ltmA.recall();
+  const foundInA = factsA.some((f) => f.id === testFact.id);
+
+  // Step 3: Read facts under orgB for the SAME userId — should find 0 of orgA's facts
+  const ltmB = new LongTermMemory(userId, orgB, c.env);
+  const factsB = await ltmB.recall();
+  const leakedToB = factsB.some((f) => f.id === testFact.id);
+
+  // Step 4: Clean up the test fact
+  await c.env.USER_MEMORY_KV.delete(`ltm:${orgA}:${userId}:${testFact.id}`);
+  // Update the index to remove the test fact
+  const indexKey = `ltm:${orgA}:${userId}:__index`;
+  const indexRaw = await c.env.USER_MEMORY_KV.get(indexKey);
+  if (indexRaw) {
+    const index = JSON.parse(indexRaw) as string[];
+    const cleaned = index.filter((id) => id !== testFact.id);
+    if (cleaned.length > 0) {
+      await c.env.USER_MEMORY_KV.put(indexKey, JSON.stringify(cleaned));
+    } else {
+      await c.env.USER_MEMORY_KV.delete(indexKey);
+    }
+  }
+
+  return c.json({
+    userId,
+    orgA,
+    orgB,
+    testFactId: testFact.id,
+    orgACanRead: foundInA,
+    orgBCanRead: leakedToB,
+    isolationOk: foundInA && !leakedToB,
+    orgAFactCount: factsA.length,
+    orgBFactCount: factsB.length,
+  });
+});
+
 // ── 404 fallback ──────────────────────────────────────────────────────────────
 app.notFound((c) => {
   return c.json(
@@ -502,6 +631,8 @@ app.notFound((c) => {
         "POST /dev/token       (portfolio only)",
         "POST /admin/seed      (requires JWT_SECRET bearer)",
         "GET  /admin/seed/status",
+        "POST /admin/kb-probe  (requires JWT_SECRET bearer)",
+        "POST /admin/memory-probe (requires JWT_SECRET bearer)",
       ],
     },
     404

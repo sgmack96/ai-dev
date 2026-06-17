@@ -45,12 +45,14 @@ interface NewsApiResponse {
  *
  * @param query     - Company name or topic (e.g. "Stripe", "Stripe funding")
  * @param role      - Checked against NEWS_ROLES
+ * @param orgId     - Tenant the query runs under — recorded for audit
  * @param env       - Worker bindings (needs NEWS_API_KEY)
  * @param toolCalls - Audit array
  */
 export async function fetchNews(
   query: string,
   role: Role,
+  orgId: string,
   env: Env,
   toolCalls: ToolCall[]
 ): Promise<string | null> {
@@ -105,7 +107,8 @@ export async function fetchNews(
     const durationMs = Date.now() - start;
     toolCalls.push({
       toolName: "news_search",
-      args: { query, role },
+      orgId,
+      args: { query, role, orgId },
       result: { count: data.articles.length, totalResults: data.totalResults },
       durationMs,
     });

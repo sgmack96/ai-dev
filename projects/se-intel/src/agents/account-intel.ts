@@ -149,7 +149,7 @@ User: ${userContext.name} (${userContext.role.toUpperCase()} at org: ${userConte
 
     // ── 1. News lookup (if we found a company name and news is relevant) ────────
     if (companyName && (hasNewsTrigger || lowerMessage.includes("research"))) {
-      const news = await fetchNews(companyName, userContext.role, this.env, toolCalls);
+      const news = await fetchNews(companyName, userContext.role, userContext.orgId, this.env, toolCalls);
       if (news) contextParts.push(news);
     }
 
@@ -158,7 +158,7 @@ User: ${userContext.name} (${userContext.role.toUpperCase()} at org: ${userConte
       ? `${message} Cloudflare opportunities ${hasTechStack ? "migration" : ""}`
       : message;
 
-    const kbResult = await kbSearch(kbQuery, userContext.role, this.env, toolCalls);
+    const kbResult = await kbSearch(kbQuery, userContext.role, userContext.orgId, this.env, toolCalls);
     if (kbResult) contextParts.push(kbResult);
 
     // ── 3. Web search (for general research or when KB comes up empty) ──────────
@@ -173,7 +173,7 @@ User: ${userContext.name} (${userContext.role.toUpperCase()} at org: ${userConte
       const webQuery = companyName
         ? `${companyName} company tech stack engineering cloud infrastructure`
         : message;
-      const webResult = await webSearch(webQuery, userContext.role, this.env, toolCalls);
+      const webResult = await webSearch(webQuery, userContext.role, userContext.orgId, this.env, toolCalls);
       if (webResult && !kbResult) contextParts.push(webResult);
     }
 

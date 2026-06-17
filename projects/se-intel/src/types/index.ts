@@ -32,6 +32,7 @@ export interface Message {
 // Recorded alongside messages for eval harness and audit trail.
 export interface ToolCall {
   toolName: string;
+  orgId: string;         // tenant the tool ran under — proves org isolation in the audit trail
   args: Record<string, unknown>;
   result: unknown;
   durationMs: number;

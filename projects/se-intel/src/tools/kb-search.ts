@@ -27,16 +27,92 @@ const MIN_SCORE = 0.5; // cosine similarity threshold
 
 export interface KBSearchResult {
   namespace: KBNamespace;
+  orgId: string;          // tenant that owns this chunk ("global" = universal) — the isolation assertion field
   content: string;
   score: number;
   productName?: string | undefined;
 }
 
 /**
+ * Raw retrieval — the deterministic core of KB search.
+ *
+ * Runs the embed + two-gate filtered Vectorize query and returns the structured
+ * chunks (sorted, capped at TOP_K). No formatting, no audit side effects.
+ *
+ * This is the function the isolation PROBE exercises: it returns each chunk's
+ * actual `orgId`, so a test can assert that org-A never receives org-B's chunks —
+ * independent of anything the LLM later says about them.
+ */
+export async function kbSearchRaw(
+  query: string,
+  role: Role,
+  orgId: string,
+  env: Env,
+  namespace?: KBNamespace
+): Promise<KBSearchResult[]> {
+  const allowedNamespaces = ROLE_KB_ACCESS[role];
+
+  if (namespace && !allowedNamespaces.includes(namespace)) {
+    console.warn(
+      `[kb-search] Role ${role} attempted to access namespace ${namespace} — denied`
+    );
+    return [];
+  }
+
+  const namespacesToQuery = namespace ? [namespace] : allowedNamespaces;
+
+  // Embed the query
+  const embedResponse = await env.AI.run(
+    "@cf/baai/bge-base-en-v1.5" as "@cf/baai/bge-base-en-v1.5",
+    { text: [query] }
+  );
+  const queryVector = (embedResponse as { data?: number[][] }).data?.[0];
+  if (!queryVector || queryVector.length === 0) {
+    console.error("[kb-search] Embedding returned empty vector");
+    return [];
+  }
+
+  // Query each allowed namespace in parallel
+  const searchPromises = namespacesToQuery.map(async (ns) => {
+    try {
+      const results = await env.VECTORIZE.query(queryVector, {
+        topK: TOP_K,
+        // Two independent access gates, ANDed:
+        //   1. namespace = role tier the caller may read (RBAC)
+        //   2. orgId ∈ [caller's tenant, "global"] = least privilege (own data + universal docs)
+        // Fail-closed: a chunk with no orgId matches neither value and drops out.
+        filter: { namespace: ns, orgId: { $in: [orgId, "global"] } },
+        returnMetadata: "all",
+      });
+
+      return results.matches
+        .filter((m) => m.score >= MIN_SCORE)
+        .map((m): KBSearchResult => ({
+          namespace: ns,
+          orgId: (m.metadata?.["orgId"] as string | undefined) ?? "(none)",
+          content: (m.metadata?.["content"] as string) ?? "",
+          score: m.score,
+          productName: (m.metadata?.["productName"] as string | undefined) ?? undefined,
+        }));
+    } catch (err) {
+      console.error(`[kb-search] Vectorize query failed for namespace ${ns}:`, err);
+      return [];
+    }
+  });
+
+  const perNamespaceResults = await Promise.all(searchPromises);
+  const allResults = perNamespaceResults.flat();
+  allResults.sort((a, b) => b.score - a.score);
+  return allResults.slice(0, TOP_K);
+}
+
+/**
  * Search the knowledge base for chunks relevant to a query.
+ * Wraps kbSearchRaw with audit logging + prompt-ready formatting.
  *
  * @param query     - Natural language query from the agent
  * @param role      - User's role — used to gate namespace access
+ * @param orgId     - Tenant the query runs under — filters Vectorize (own org + "global") AND recorded for audit
  * @param env       - Worker bindings
  * @param toolCalls - Audit array to append this tool call to
  * @param namespace - Optional: restrict to a specific namespace
@@ -44,82 +120,29 @@ export interface KBSearchResult {
 export async function kbSearch(
   query: string,
   role: Role,
+  orgId: string,
   env: Env,
   toolCalls: ToolCall[],
   namespace?: KBNamespace
 ): Promise<string | null> {
   const start = Date.now();
 
-  // Determine which namespaces this role is allowed to query
-  const allowedNamespaces = ROLE_KB_ACCESS[role];
-
-  // If a specific namespace was requested, verify access
-  if (namespace && !allowedNamespaces.includes(namespace)) {
-    console.warn(
-      `[kb-search] Role ${role} attempted to access namespace ${namespace} — denied`
-    );
-    return null;
-  }
-
-  // Query all allowed namespaces (or just the requested one)
-  const namespacesToQuery = namespace ? [namespace] : allowedNamespaces;
-
-  let allResults: KBSearchResult[] = [];
-
+  let topResults: KBSearchResult[];
   try {
-    // Embed the query
-    const embedResponse = await env.AI.run(
-      "@cf/baai/bge-base-en-v1.5" as "@cf/baai/bge-base-en-v1.5",
-      { text: [query] }
-    );
-
-    const queryVector = (embedResponse as { data?: number[][] }).data?.[0];
-
-    if (!queryVector || queryVector.length === 0) {
-      console.error("[kb-search] Embedding returned empty vector");
-      return null;
-    }
-
-    // Query each allowed namespace in parallel
-    const searchPromises = namespacesToQuery.map(async (ns) => {
-      try {
-        const results = await env.VECTORIZE.query(queryVector, {
-          topK: TOP_K,
-          filter: { namespace: ns },
-          returnMetadata: "all",
-        });
-
-        return results.matches
-          .filter((m) => m.score >= MIN_SCORE)
-          .map((m): KBSearchResult => ({
-            namespace: ns,
-            content: (m.metadata?.["content"] as string) ?? "",
-            score: m.score,
-            productName: (m.metadata?.["productName"] as string | undefined) ?? undefined,
-          }));
-      } catch (err) {
-        console.error(`[kb-search] Vectorize query failed for namespace ${ns}:`, err);
-        return [];
-      }
-    });
-
-    const perNamespaceResults = await Promise.all(searchPromises);
-    allResults = perNamespaceResults.flat();
+    topResults = await kbSearchRaw(query, role, orgId, env, namespace);
   } catch (err) {
-    console.error("[kb-search] Embedding error:", err);
+    console.error("[kb-search] retrieval error:", err);
     return null;
   }
 
   const durationMs = Date.now() - start;
-
-  // Sort by score descending, cap at TOP_K total
-  allResults.sort((a, b) => b.score - a.score);
-  const topResults = allResults.slice(0, TOP_K);
+  const namespacesToQuery = namespace ? [namespace] : ROLE_KB_ACCESS[role];
 
   // Record tool call for audit log
   toolCalls.push({
     toolName: "kb_search",
-    args: { query, role, namespace: namespace ?? "all_allowed" },
+    orgId,
+    args: { query, role, orgId, namespace: namespace ?? "all_allowed" },
     result: { count: topResults.length, topScore: topResults[0]?.score ?? 0 },
     durationMs,
   });

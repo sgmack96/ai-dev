@@ -89,7 +89,7 @@ export abstract class BaseAgent implements DurableObject {
     const history = this.memory.getHistory(threadId);
 
     // Load long-term memory for context injection
-    const ltm = new LongTermMemory(userContext.userId, this.env);
+    const ltm = new LongTermMemory(userContext.userId, userContext.orgId, this.env);
     const ltmContext = await ltm.formatForPrompt();
 
     // Build system prompt (agent-specific, role-aware)
@@ -177,7 +177,7 @@ export abstract class BaseAgent implements DurableObject {
     );
 
     // Extract and persist memorable facts — waitUntil keeps the DO alive
-    const ltmWriter = new LongTermMemory(userContext.userId, this.env);
+    const ltmWriter = new LongTermMemory(userContext.userId, userContext.orgId, this.env);
     this.state.waitUntil(
       ltmWriter
         .extractAndRemember(message, responseText, this.env)
@@ -228,7 +228,7 @@ export abstract class BaseAgent implements DurableObject {
 
     // Build the prompt (same as handleChat)
     const history = this.memory.getHistory(threadId);
-    const ltm = new LongTermMemory(userContext.userId, this.env);
+    const ltm = new LongTermMemory(userContext.userId, userContext.orgId, this.env);
     const ltmContext = await ltm.formatForPrompt();
     const systemPrompt = this.buildSystemPrompt(userContext, ltmContext);
 
@@ -354,7 +354,7 @@ export abstract class BaseAgent implements DurableObject {
       );
 
       // Extract and persist memorable facts — waitUntil keeps the DO alive
-      const ltmWriter = new LongTermMemory(userContext.userId, this.env);
+      const ltmWriter = new LongTermMemory(userContext.userId, userContext.orgId, this.env);
       this.state.waitUntil(
         ltmWriter
           .extractAndRemember(message, fullText, this.env)
