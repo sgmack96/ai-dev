@@ -6,6 +6,32 @@
 
 ---
 
+## Date: 2026-06-18
+## Resource: STUDY.md — Chapter 4: The Rate Limiter
+## Time Spent: 60 min
+## Topics: sliding window, fixed window, token bucket, KV eventual consistency, per-org rate limiting, D1 vs KV consistency tradeoffs
+## Connects to this week's target: Multi-tenancy (Cycle 1 / Week 1)
+
+### Key Insight (one sentence)
+The rate limiter is the one remaining layer not scoped to `orgId` — and it should stay that way for now, because the consistency tradeoff that makes KV acceptable for per-user rate limiting (over-count by 1-2 is fine) would be unacceptable for org-level billing or audit, which is why those live in D1.
+
+### How it connects to what I'm building
+Chapter 4 explains why the rate limiter uses KV (eventually consistent, globally distributed, sub-10ms reads) instead of D1 (strongly consistent, single-region, network hop). That same tradeoff showed up on Day 4: the audit log lives in D1 *because* a security auditor needs exact row counts scoped by org — an eventual-consistency store that might return stale data for a few hundred milliseconds would be unacceptable there. The rate limiter uses KV because being wrong by 1-2 requests during a burst is a guardrail, not a security boundary.
+
+Now that every other layer is scoped to `orgId` (DO keys, KV memory keys, Vectorize metadata, D1 audit reads), the rate limiter stands out. It's keyed by `rl:${userId}:${bucket}` — no org prefix. For the current use case (per-user request throttle), that's correct: the rate limit protects the platform from individual user abuse, not from one org outspending another. But the gap worth naming: in a real multi-tenant SaaS, you'd want a *second* rate limit tier — per-org — to prevent one org's aggregate traffic from starving another. That would need a separate counter (e.g. `rl-org:${orgId}:${bucket}`) and a different limit table. Logged to BACKLOG for future work.
+
+The role-based limits (AE: 20/min, SE: 30/min, manager: 50/min) connect to the Day 4 audit endpoint: a manager reviewing 10 team members' usage needs more headroom than an AE checking one account. The audit endpoint is the first feature that justifies the manager's higher limit — before today, there was no org-wide read operation.
+
+> Prompt I used: Chapter 4 covers three rate-limiting strategies (fixed window, sliding window, token bucket). Why did we pick sliding window? Then: the rate limiter uses KV, the audit log uses D1. What's the consistency tradeoff that makes that split correct? Finally: the rate limiter is the one layer NOT scoped to `orgId` — should it be, and what would a per-org rate limit look like?
+
+### How I'd explain it to a customer / exec (practice out loud)
+Every user in the system has a per-minute request limit based on their role — an account executive gets 20 requests per minute, a sales manager gets 50. That protects the platform from runaway usage. But the audit log is the receipt — it tells you exactly what each person and each organization did, when, and with which tools. The audit data is strongly consistent, meaning the numbers are always exact, not "eventually correct." That matters when you're showing usage reports to a VP or responding to a compliance audit. The rate limit is a guardrail; the audit log is the paper trail. Different jobs, different storage, different consistency guarantees.
+
+### Tradeoff or open question
+The rate limiter is currently per-user only. In a real multi-tenant deployment, you'd want a per-org tier too — preventing one organization from consuming a disproportionate share of compute by having 50 users all hitting their individual limits simultaneously. That would be a second KV counter (`rl-org:${orgId}:${bucket}`) with an aggregate cap. The eventual-consistency weakness applies at the org tier too: two users in the same org could both read the same org-level count and both succeed when the org as a whole should be throttled. If exact enforcement matters at the org level (e.g. billing), you'd need a Durable Object counter instead of KV. Logged to BACKLOG.
+
+---
+
 ## Date: 2026-06-17
 ## Resource: STUDY.md — Chapter 3: The Auth System
 ## Time Spent: 60 min

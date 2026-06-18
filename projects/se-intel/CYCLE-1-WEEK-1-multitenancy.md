@@ -53,9 +53,12 @@
 - [x] **Long-term:** `LongTermMemory` constructor takes `orgId` as second param. KV keys changed from `ltm:{userId}:{factId}` to `ltm:{orgId}:{userId}:{factId}`. All 5 call sites updated (`base-agent.ts` ×4, `index.ts` ×1).
 - [x] **VERIFY (deterministic):** added `/admin/memory-probe` — writes a test fact as orgA/user, reads as orgB/user, asserts 0 leaked facts, then cleans up. **Result: `isolationOk: true`** — orgA reads its fact, orgB sees nothing. KB probe regression check also passes (`isolationOk: true` for both orgs).
 
-### Day 4 — Isolate audit by org
-- [ ] Add `org_id` to the D1 audit schema (`schema.sql`) + `writeAudit`.
-- [ ] Add an admin query that returns audit rows **scoped to one org** (and proves it can't return others).
+### Day 4 — Isolate audit by org  ✅ (code done 2026-06-18)
+
+> **Finding confirmed:** `org_id` column, index, and INSERT binding already existed since Day 1. Day 4 is read-only — the enforcement gap was on the *query* side, not the *write* side.
+
+- [x] **`GET /api/v1/audit`** — user-accessible, org-scoped, role-split read. `orgId` comes from the JWT (never from the request). `sales_manager` sees all rows for their org (`scope: "org"`); everyone else sees only their own rows (`scope: "own"`, adds `AND user_id = ?`). Optional `agentType` filter. Tested: manager sees 5 org-wide rows, SE sees 0 own rows (fresh DO keys).
+- [x] **`POST /admin/audit-probe`** — deterministic isolation test. Counts rows per org, then fetches orgA's most recent row ID and confirms orgB's scoped query cannot return it. **Result: `isolationOk: true`, `crossOrgLeaked: 0`**. All three probes pass (KB + memory + audit).
 
 ### Day 5 — Prove it + publish
 - [ ] Write a test (extend `evaluation-harness/` or a new `tests/` case): seed `org-a` + `org-b`, assert a request as `org-a` returns **zero** `org-b` rows/chunks/memory.

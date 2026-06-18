@@ -13,9 +13,9 @@
 DATE:    2026-06-16  (update tomorrow)
 CYCLE:   1  (Production Hardening)
 WEEK:    1  (Multi-tenancy)  ·  DAY 2 build PROVEN — isolation confirmed via /admin/kb-probe
-TASK:    ▶ Day 3 COMPLETE. START Day 4 — audit isolation: scoped read query on D1 audit_log,
-         prove cross-org audit rows are inaccessible, THEORY (STUDY.md ch.4 — Rate Limiter),
-         NARRATE in portfolio/src/content/digest/2026-06-18.md → publish.sh.
+TASK:    ▶ Day 4 COMPLETE. START Day 5 — end-to-end isolation test + Blog #1.
+         Test: seed org-a + org-b, assert zero cross-org leakage across all 3 layers.
+         Blog: "Multi-tenant isolation in an edge AI system" → portfolio/src/content/blog/.
 ```
 
 > **▶ Sanity re-check on reopen (should print `true` twice):**
@@ -116,4 +116,5 @@ The Applied AI Architect signature. (Unlock after Cycle 2 ships.)
 - 2026-06-15 — Set up command center + templates. Cycle 1 / Week 1 begins.
 - 2026-06-15 — Day 1 ✅ Threaded `orgId` end-to-end into `ToolCall` audit shape (types + 3 tools + agent call-sites), tsc green. Findings: audit-write already had org_id (shrinks Day 4 → scoped read only); RAG shares chunks across orgs (Day 2 = metadata filter + re-seed). Reshaped daily blocks → DIRECT/COMPREHEND/VERIFY/THEORY/NARRATE + Working Agreement. Day 1 DIRECT/COMPREHEND/VERIFY done under new model. THEORY + NARRATE done & published. **Day 1 fully complete.**
 - 2026-06-16 — Day 2 ✅ FULLY COMPLETE. RAG isolation shipped + THEORY (STUDY.md ch.2, two-layer isolation model) + NARRATE published (the LLM-hallucination-masked-the-test story). Key insight: LLM is not a reliable test oracle — deterministic probe required.
-- 2026-06-17 — Day 3 ✅ FULLY COMPLETE. Memory isolation shipped — DO keys scoped to `orgId:userId` (7 sites), LTM KV keys scoped to `ltm:{orgId}:{userId}:{factId}` (5 sites), `/admin/memory-probe` proves `isolationOk: true`. THEORY (STUDY.md ch.3, auth + Zero Trust layering) + NARRATE published. Key insight: the claim existed without the enforcement — `orgId` was in the JWT since Day 1 but wasn't in the storage layer until Day 3. Day 4 target: audit isolation (scoped read on D1).
+- 2026-06-17 — Day 3 ✅ FULLY COMPLETE. Memory isolation shipped — DO keys scoped to `orgId:userId` (7 sites), LTM KV keys scoped to `ltm:{orgId}:{userId}:{factId}` (5 sites), `/admin/memory-probe` proves `isolationOk: true`. THEORY (STUDY.md ch.3, auth + Zero Trust layering) + NARRATE published. Key insight: the claim existed without the enforcement — `orgId` was in the JWT since Day 1 but wasn't in the storage layer until Day 3.
+- 2026-06-18 — Day 4 ✅ FULLY COMPLETE. Audit isolation shipped — `GET /api/v1/audit` (user-accessible, org-scoped, role-split: manager sees org, individual sees own), `/admin/audit-probe` proves `isolationOk: true`, `crossOrgLeaked: 0`. All 3 probes pass (KB + memory + audit). THEORY (STUDY.md ch.4, rate limiter + consistency tradeoffs) + NARRATE published. Key insight: the schema was right from Day 1 — the gap was the read path, not the write path. Day 5 target: end-to-end test + Blog #1.

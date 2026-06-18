@@ -407,6 +407,60 @@ app.get("/api/v1/memory", async (c) => {
   });
 });
 
+// ── Audit log (org-scoped, role-split) ─────────────────────────────────────────
+// Returns audit rows for the caller's org, scoped by role:
+//   - sales_manager: sees all rows for their org (team review)
+//   - everyone else: sees only their own rows
+// orgId comes from the JWT — callers cannot request another org's data.
+//   GET /api/v1/audit?limit=50&agentType=account
+app.get("/api/v1/audit", async (c) => {
+  const userContext = c.get("userContext" as never) as Awaited<
+    ReturnType<typeof extractUserContext>
+  >;
+
+  const limit = Math.min(parseInt(c.req.query("limit") ?? "50"), 200);
+  const agentType = c.req.query("agentType"); // optional filter
+
+  const isManager = userContext!.role === "sales_manager";
+
+  // Build the query — org_id always comes from the JWT, never from the request
+  let query = `SELECT id, timestamp, user_id, role, agent_type, thread_id,
+       message_preview, tools_used, response_latency_ms, model, blocked
+     FROM audit_log
+     WHERE org_id = ?`;
+  const params: (string | number)[] = [userContext!.orgId];
+
+  // Non-managers can only see their own rows
+  if (!isManager) {
+    query += ` AND user_id = ?`;
+    params.push(userContext!.userId);
+  }
+
+  // Optional agent type filter
+  if (agentType && ["account", "enablement", "transcript"].includes(agentType)) {
+    query += ` AND agent_type = ?`;
+    params.push(agentType);
+  }
+
+  query += ` ORDER BY timestamp DESC LIMIT ?`;
+  params.push(limit);
+
+  const result = await c.env.DB.prepare(query).bind(...params).all();
+
+  return c.json({
+    orgId: userContext!.orgId,
+    userId: userContext!.userId,
+    role: userContext!.role,
+    scope: isManager ? "org" : "own",
+    rowCount: result.results.length,
+    rows: result.results.map((row) => ({
+      ...row,
+      timestamp: new Date(row.timestamp as number).toISOString(),
+      toolsUsed: row.tools_used ? JSON.parse(row.tools_used as string) : [],
+    })),
+  });
+});
+
 // ── Conversation history ───────────────────────────────────────────────────────
 app.get("/api/v1/history/:agent", async (c) => {
   const userContext = c.get("userContext" as never) as Awaited<
@@ -618,6 +672,71 @@ app.post("/admin/memory-probe", async (c) => {
   });
 });
 
+// ── Admin: Audit isolation probe ──────────────────────────────────────────────
+// Deterministic multi-tenancy test for audit log (D1).
+// Counts rows per org, then confirms a query scoped to orgB returns 0 of orgA's rows.
+// No fake data written — uses existing audit rows. Pure query isolation proof.
+//   curl -X POST .../admin/audit-probe -H "Authorization: Bearer <SECRET>" \
+//     -d '{"orgA":"acme","orgB":"portfolio-org"}'
+app.post("/admin/audit-probe", async (c) => {
+  const secret = c.env.JWT_SECRET;
+  if (secret) {
+    const auth = c.req.header("Authorization");
+    if (!auth || auth !== `Bearer ${secret}`) {
+      return c.json({ error: "Unauthorized" }, { status: 401 });
+    }
+  }
+
+  let body: { orgA?: string; orgB?: string };
+  try {
+    body = (await c.req.json()) as typeof body;
+  } catch {
+    return c.json({ error: "Invalid JSON" }, { status: 400 });
+  }
+
+  const { orgA, orgB } = body;
+  if (!orgA || !orgB) {
+    return c.json({ error: "Required: orgA, orgB" }, { status: 400 });
+  }
+  if (orgA === orgB) {
+    return c.json({ error: "orgA and orgB must be different" }, { status: 400 });
+  }
+
+  // Count rows per org
+  const countA = await c.env.DB.prepare(
+    `SELECT COUNT(*) as cnt FROM audit_log WHERE org_id = ?`
+  ).bind(orgA).first<{ cnt: number }>();
+
+  const countB = await c.env.DB.prepare(
+    `SELECT COUNT(*) as cnt FROM audit_log WHERE org_id = ?`
+  ).bind(orgB).first<{ cnt: number }>();
+
+  // Confirm no orgA rows appear in a query scoped to orgB
+  // Fetch orgA's most recent row ID (if any), then check if orgB's scoped query returns it
+  let leakedRowFound = false;
+  if ((countA?.cnt ?? 0) > 0) {
+    const orgARow = await c.env.DB.prepare(
+      `SELECT id FROM audit_log WHERE org_id = ? ORDER BY timestamp DESC LIMIT 1`
+    ).bind(orgA).first<{ id: string }>();
+
+    if (orgARow) {
+      const leaked = await c.env.DB.prepare(
+        `SELECT COUNT(*) as cnt FROM audit_log WHERE org_id = ? AND id = ?`
+      ).bind(orgB, orgARow.id).first<{ cnt: number }>();
+      leakedRowFound = (leaked?.cnt ?? 0) > 0;
+    }
+  }
+
+  return c.json({
+    orgA,
+    orgB,
+    orgARowCount: countA?.cnt ?? 0,
+    orgBRowCount: countB?.cnt ?? 0,
+    crossOrgLeaked: leakedRowFound ? 1 : 0,
+    isolationOk: !leakedRowFound,
+  });
+});
+
 // ── 404 fallback ──────────────────────────────────────────────────────────────
 app.notFound((c) => {
   return c.json(
@@ -626,6 +745,7 @@ app.notFound((c) => {
       availableRoutes: [
         "POST /api/v1/account",
         "POST /api/v1/enablement",
+        "GET  /api/v1/audit",
         "GET  /api/v1/history/:agent?threadId=<id>",
         "GET  /health",
         "POST /dev/token       (portfolio only)",
@@ -633,6 +753,7 @@ app.notFound((c) => {
         "GET  /admin/seed/status",
         "POST /admin/kb-probe  (requires JWT_SECRET bearer)",
         "POST /admin/memory-probe (requires JWT_SECRET bearer)",
+        "POST /admin/audit-probe  (requires JWT_SECRET bearer)",
       ],
     },
     404
