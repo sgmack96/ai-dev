@@ -60,14 +60,14 @@
 - [x] **`GET /api/v1/audit`** — user-accessible, org-scoped, role-split read. `orgId` comes from the JWT (never from the request). `sales_manager` sees all rows for their org (`scope: "org"`); everyone else sees only their own rows (`scope: "own"`, adds `AND user_id = ?`). Optional `agentType` filter. Tested: manager sees 5 org-wide rows, SE sees 0 own rows (fresh DO keys).
 - [x] **`POST /admin/audit-probe`** — deterministic isolation test. Counts rows per org, then fetches orgA's most recent row ID and confirms orgB's scoped query cannot return it. **Result: `isolationOk: true`, `crossOrgLeaked: 0`**. All three probes pass (KB + memory + audit).
 
-### Day 5 — Prove it + publish
-- [ ] Write a test (extend `evaluation-harness/` or a new `tests/` case): seed `org-a` + `org-b`, assert a request as `org-a` returns **zero** `org-b` rows/chunks/memory.
-- [ ] Run it. Make it pass. This test is your interview artifact.
-- [ ] **Blog #1** ("Multi-tenant isolation in an edge AI system") → `portfolio/src/content/blog/` → `publish.sh`.
-- [ ] Update `MASTERY.md` TODAY block → Week 2 (Evals as a CI gate).
+### Day 5 — Prove it + publish  ✅ (done 2026-06-18)
 
-## Definition of done
-- [ ] All three layers (RAG / memory / audit) filter by `orgId`.
-- [ ] A passing automated test proves cross-org isolation.
-- [ ] Blog #1 published.
-- [ ] Tradeoff (metadata-filter vs index-per-org) written down in your own words.
+- [x] **`tests/isolation-test.sh`** — end-to-end isolation test. Calls all 3 admin probes in sequence, asserts `isolationOk: true`, prints summary table. CI-compatible (`--ci` exits 1 on failure). **Result: 3/3 PASSED.**
+- [x] **Blog #1** — "Multi-Tenant Isolation in an Edge AI System" (240 lines). Published at `portfolio.macksportreport.com/blog/multi-tenant-isolation-edge-ai`. Three layers, three probes, the hallucination story, what's still missing.
+- [x] Updated `MASTERY.md` → Week 2 (Evals as a CI gate).
+
+## Definition of done  ✅ ALL MET
+- [x] All three layers (RAG / memory / audit) filter by `orgId`.
+- [x] A passing automated test proves cross-org isolation — `isolation-test.sh` 3/3 pass.
+- [x] Blog #1 published.
+- [x] Tradeoff (metadata-filter vs index-per-org) written in own words — blog, cycle doc, and theory log.

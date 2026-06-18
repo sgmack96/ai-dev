@@ -6,7 +6,35 @@
 
 ---
 
-## Date: 2026-06-18
+## Date: 2026-06-18 (Day 5)
+## Resource: STUDY.md — Chapter 5: The RAG System
+## Time Spent: 60 min
+## Topics: embeddings, cosine similarity, BGE-base-en-v1.5, eager tool calling, Vectorize metadata filtering, score thresholds, RAG faithfulness
+## Connects to this week's target: Multi-tenancy (Cycle 1 / Week 1) — Week 1 capstone
+
+### Key Insight (one sentence)
+RAG has two failure modes that look identical from the outside — retrieval failure (wrong chunks returned) and generation failure (right chunks returned, LLM ignores them) — and you can only distinguish them by testing below the model layer.
+
+### How it connects to what I'm building
+Chapter 5 describes the full RAG pipeline: embed the query with BGE-base-en-v1.5 (768 dimensions), query Vectorize across allowed namespaces in parallel, filter by cosine similarity >= 0.5, inject the top 5 chunks as a system message before the user's question. The `orgId` metadata filter I added on Day 2 sits at step 3 — it's an additional `WHERE` clause on the Vectorize query that happens *before* the similarity ranking. A chunk can score 0.95 and still be invisible if its `orgId` doesn't match the caller's org.
+
+The Week 1 capstone proved this end-to-end: `isolation-test.sh` runs all three probes (kb-probe, memory-probe, audit-probe) in sequence and asserts `isolationOk: true` across the board. The test is CI-compatible — `--ci` flag exits 1 on any failure. No LLM in the path.
+
+The connection between Chapter 5's score threshold (0.5) and the BACKLOG faithfulness gap is worth naming: the threshold controls what gets *into* the context window, but nothing controls whether the LLM *uses* what's in the window. The score of 0.5 was tuned through the eval harness — lower thresholds injected noise (groundedness dropped), higher thresholds missed relevant content (hallucination increased). But even at the right threshold, the LLM can still ignore the retrieved content entirely. That's Week 2's problem: a faithfulness eval that checks whether the response actually cites the chunks it was given.
+
+Chapter 5 also explains "eager tool calling" — tools run BEFORE the LLM, not called BY the LLM. This is more predictable: the agent doesn't decide whether to search, it always searches. The trade-off is slightly more latency (tool call even when unnecessary) for much more reliability (KB content is always in context). In the multi-tenancy context, this matters: the `orgId` filter runs on every request, not only when the model decides it should.
+
+> Prompt I used: Chapter 5 describes a 5-step RAG pipeline. Where does the `orgId` metadata filter sit in that pipeline? Then: the chapter explains "eager tool calling" (tools run before the LLM, not called by it). How does that design decision interact with multi-tenancy — what would happen if the LLM decided *when* to search, and could it bypass the orgId filter? Finally: the score threshold is 0.5. What does that control, and what does it NOT control?
+
+### How I'd explain it to a customer / exec (practice out loud)
+When your team asks a question, the system does two things in sequence. First, it searches your company's knowledge base for relevant documents — that search is filtered so only your company's documents and shared product information are visible. Second, it feeds those documents to the AI model as context before the model generates its response. The model reads your documents and uses them to answer. The search is always run — the AI doesn't get to decide whether to check your knowledge base. That means the security filter is always applied, on every request, regardless of how the question is phrased. The test we run proves both steps independently: step 1 returns only your documents (proven by the probe), and step 2 is where the AI reads them (measured by the quality evaluation we're building next).
+
+### Tradeoff or open question
+The 0.5 cosine similarity threshold is a single number controlling the quality-noise tradeoff for every query across every org. In practice, different orgs may need different thresholds — a legal team's knowledge base might need stricter matching (0.7+) to avoid injecting tangentially related clauses, while a sales team's base might benefit from looser matching (0.4) to surface more competitive context. A per-org or per-namespace threshold is worth exploring but adds configuration surface area. For now, 0.5 works because it was tuned against the eval harness. Week 2's faithfulness eval will tell us whether the threshold is actually the bottleneck or whether the problem is downstream in the generation layer.
+
+---
+
+## Date: 2026-06-18 (Day 4)
 ## Resource: STUDY.md — Chapter 4: The Rate Limiter
 ## Time Spent: 60 min
 ## Topics: sliding window, fixed window, token bucket, KV eventual consistency, per-org rate limiting, D1 vs KV consistency tradeoffs
