@@ -10,35 +10,29 @@
 ## ☀️ TODAY  — *(edit this line each morning)*
 
 ```
-DATE:    2026-06-16  (update tomorrow)
+DATE:    2026-06-18  (update tomorrow)
 CYCLE:   1  (Production Hardening)
-WEEK:    1  (Multi-tenancy)  ·  DAY 2 build PROVEN — isolation confirmed via /admin/kb-probe
-TASK:    ▶ WEEK 1 COMPLETE. All 5 days shipped. isolation-test.sh 3/3 pass. Blog #1 live.
-         START Week 2 — Evals as a CI gate. Block deploy on quality drop.
+WEEK:    2  (Evals as a CI gate)  ·  Week 1 COMPLETE — multi-tenancy isolation proven
+TASK:    ▶ START Week 2 — Evals as a CI gate. Block deploy on quality drop.
          First target: faithfulness eval (LLM answered 25% when chunk said 35%).
+         Theory pull: Chip Huyen evals chapter + STUDY.md ch.8.
 ```
 
-> **▶ Sanity re-check on reopen (should print `true` twice):**
+> **▶ Sanity re-check on reopen (should print 3/3 pass):**
 > ```sh
-> cd ~/ai-dev/projects/se-intel
-> SECRET=$(grep '^JWT_SECRET=' .dev.vars | cut -d= -f2-)
-> BASE=https://se-intel-portfolio.stephenmack96.workers.dev
-> for ORG in acme portfolio-org; do
->   curl -sX POST $BASE/admin/kb-probe -H "Authorization: Bearer $SECRET" \
->     -H "Content-Type: application/json" \
->     -d "{\"query\":\"negotiated Cloudflare discount\",\"role\":\"se\",\"orgId\":\"$ORG\"}" | jq .isolationOk
-> done
+> cd ~/ai-dev/projects/se-intel/evaluation-harness
+> ./tests/isolation-test.sh
 > ```
 
-### The 5 phases (do every working day)
+### The 5 phases (do every working day) — reset for Week 2
 
-- [x] **DIRECT** — *(Day 2 ✅ — Option A: metadata filter, least privilege, "global" sentinel)*
-- [x] **COMPREHEND** — *(Day 2 ✅ — filter at `kb-search.ts:94`, refactored `kbSearchRaw`; 3 Qs answered)*
-- [x] **VERIFY** — *(Day 2 ✅ — `/admin/kb-probe` deterministic test: isolationOk=true both orgs, acme chunk filtered from portfolio-org. Isolation PROVEN. Secondary finding: LLM faithfulness gap → Week 2 evals.)*
-- [x] **THEORY (60m+)** — STUDY.md ch.2 (Workers + DOs, two-layer isolation model) → `THEORY-LOG.md`. *(Day 2 ✅)*
-- [x] **NARRATE (20–30m)** — `[BUILD]` in `../portfolio/src/content/digest/2026-06-16.md` published. *(Day 2 ✅)*
+- [ ] **DIRECT** — Week 2 Day 1 decision pending
+- [ ] **COMPREHEND** — 
+- [ ] **VERIFY** — 
+- [ ] **THEORY (60m+)** — 
+- [ ] **NARRATE (20–30m)** — 
 
-> *(Day 1 fully complete — see Progress Log.)*
+> **Week 1 fully complete** — 5 days, 3 isolation layers, 3 probes, `isolation-test.sh` 3/3 pass, Blog #1 published. See Progress Log.
 
 > The point is NOT "ship code" — the AI does that in minutes. The point is **you can defend every decision cold.**
 > Daily litmus test: explain today's change with this chat closed. If you can't, you skipped COMPREHEND.

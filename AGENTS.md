@@ -182,7 +182,7 @@ This is a living roadmap. I will continue building, learning, and expanding proj
 | **Phase 3** | Production | Eval framework, A/B testing, cost engineering, observability, enterprise audit |
 | **Phase 4+** | Portfolio & Beyond | Vertical agents, competitive analysis, blog posts, open-source contributions, new ideas as they come |
 
-**Current status:** Starting fresh. Ready to ship.
+**Current status:** SE Intel is the active flagship. Cycle 1 / Week 1 (Multi-tenancy) complete. Week 2 (Evals as CI gate) starting. See `MASTERY.md` for daily command center.
 
 ---
 
@@ -245,17 +245,25 @@ This is a living roadmap. I will continue building, learning, and expanding proj
 ### 2. SE Intel — Multi-Agent Revenue Intelligence Platform
 - **Live URL:** https://se-intel-portfolio.stephenmack96.workers.dev
 - **Portfolio:** https://portfolio.macksportreport.com/projects/se-intel
-- **Blog:** https://portfolio.macksportreport.com/blog/se-intel-architecture
-- **Status:** v1.1 shipped — 3 agents, streaming, memory, eval harness (87% pass rate)
-- **Stack:** Workers, Durable Objects (SQLite), Workers AI (Llama 3.3 70B), Vectorize (102 chunks × 3 namespaces), KV (rate limit + long-term memory), D1 (audit log), Hono, JWT auth
+- **Blog #1 (architecture):** https://portfolio.macksportreport.com/blog/se-intel-architecture
+- **Blog #2 (multi-tenancy):** https://portfolio.macksportreport.com/blog/multi-tenant-isolation-edge-ai
+- **Status:** Cycle 1 / Week 1 COMPLETE (multi-tenancy hardened) — Week 2 next (Evals as CI gate)
+- **Stack:** Workers, Durable Objects (SQLite), Workers AI (Llama 3.3 70B), Vectorize (105 chunks × 3 namespaces, org-isolated), KV (rate limit + org-scoped long-term memory), D1 (audit log, org-scoped reads), Hono, JWT auth
 - **Agents:**
   - `AccountIntelAgent` — real-time company research, tech stack analysis, deal strategy
   - `EnablementAgent` — product Q&A, objection handling, POC guidance, competitive positioning
   - `TranscriptAgent` — post-call transcript analysis, CRM-ready structured output
 - **Features:** Streaming SSE (token-by-token), long-term memory extraction (LLM → KV), role-aware depth rules
-- **KB namespaces:** `public` (80 product chunks), `se_only` (12 technical/competitive), `manager_only` (10 deal strategy/pricing)
+- **KB namespaces:** `public` (80 product chunks), `se_only` (12 technical/competitive), `manager_only` (10 deal strategy/pricing), plus 3 org-specific acme chunks
 - **RBAC:** 5 roles (ae, se, csm, tam, sales_manager), JWT-gated, tool-level enforcement
+- **Multi-tenancy (Cycle 1 / Week 1):**
+  - RAG: `orgId` metadata filter on Vectorize (`kb-search.ts:94`), `"global"` sentinel for shared docs
+  - Memory: DO keys scoped to `orgId:userId` (7 sites), KV keys to `ltm:{orgId}:{userId}:{factId}` (5 sites)
+  - Audit: `GET /api/v1/audit` (user-accessible, role-split: manager sees org, individual sees own)
+  - Probes: `/admin/kb-probe`, `/admin/memory-probe`, `/admin/audit-probe` — all deterministic, no LLM
+  - End-to-end test: `evaluation-harness/tests/isolation-test.sh` — 3/3 pass, CI-compatible
 - **Eval harness:** 15 test cases, LLM-as-judge (4 dimensions), regression tracking, 87% pass rate (67% → 73% → 87% over 3 iterations)
+- **Pending:** Week 2 — faithfulness eval (LLM doesn't reliably ground in retrieved chunks), eval as CI gate
 
 ### 3. SE Intel MCP Server
 - **Location:** /Users/smack/ai-dev/projects/se-intel-mcp/
