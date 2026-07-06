@@ -1,0 +1,81 @@
+[
+  {
+    "id": "fth-001",
+    "agent": "enablement",
+    "role": "se",
+    "orgId": "acme",
+    "input": "What discount has Acme Corp negotiated with Cloudflare?",
+    "expected": {
+      "topics_covered": ["discount", "acme"],
+      "tools_expected": ["kb_search"],
+      "max_latency_ms": 35000
+    },
+    "expected_facts": [
+      { "fact": "35%", "kind": "grounded", "aliases": ["35 percent", "35% off", "35 % off"] }
+    ],
+    "rubric": "The acme KB chunk states the negotiated discount is 35% off list price. The response MUST state 35%. This is the canonical faithfulness case: retrieval returns the 35% chunk, so a faithful response must use it. Answering any other number (the Day-2 bug answered 25%) is a grounding failure."
+  },
+  {
+    "id": "fth-002",
+    "agent": "enablement",
+    "role": "se",
+    "input": "How do Cloudflare Workers cold starts compare to AWS Lambda?",
+    "expected": {
+      "topics_covered": ["cold start", "V8 isolates", "Lambda"],
+      "tools_expected": ["kb_search"],
+      "max_latency_ms": 35000
+    },
+    "expected_facts": [
+      { "fact": "5ms", "kind": "grounded", "aliases": ["5 ms", "5 millisecond", "5 milliseconds", "sub-5ms", "under 5ms"] },
+      { "fact": "v8 isolate", "kind": "grounded", "aliases": ["v8 isolates", "isolate"] }
+    ],
+    "rubric": "Public KB states Workers use V8 isolates that spin up in under 5ms vs 100-1000ms containers for Lambda. A faithful SE-depth answer must cite the V8 isolate mechanism and the sub-5ms figure. Missing the retrieved 5ms figure is a grounding failure."
+  },
+  {
+    "id": "fth-003",
+    "agent": "enablement",
+    "role": "se",
+    "input": "A prospect is worried about vendor lock-in to Cloudflare. How do I respond?",
+    "expected": {
+      "topics_covered": ["vendor lock-in", "WinterCG", "portability"],
+      "tools_expected": ["kb_search"],
+      "max_latency_ms": 35000
+    },
+    "expected_facts": [
+      { "fact": "wintercg", "kind": "grounded", "aliases": ["winter cg"] }
+    ],
+    "rubric": "The se_only lock-in playbook chunk centers on WinterCG-compliant APIs (same code runs on Deno, Bun, any WinterCG runtime). A faithful SE answer must reference WinterCG / standards portability. If WinterCG was retrieved but the answer omits it, that is a grounding failure."
+  },
+  {
+    "id": "fth-004",
+    "agent": "enablement",
+    "role": "se",
+    "input": "Prospect says Cloudflare is not enterprise-ready. What compliance proof points do I cite?",
+    "expected": {
+      "topics_covered": ["enterprise", "compliance", "SOC 2", "ISO 27001"],
+      "tools_expected": ["kb_search"],
+      "max_latency_ms": 35000
+    },
+    "expected_facts": [
+      { "fact": "soc 2 type ii", "kind": "grounded", "aliases": ["soc 2", "soc2", "soc 2 type 2"] },
+      { "fact": "iso 27001", "kind": "grounded", "aliases": ["iso27001"] }
+    ],
+    "rubric": "The se_only enterprise-readiness chunk lists SOC 2 Type II, ISO 27001, FedRAMP Moderate, PCI DSS Level 1. A faithful answer must cite specific named certifications that were retrieved. Vague 'Cloudflare is trusted by enterprises' without the retrieved certifications is a grounding failure."
+  },
+  {
+    "id": "fth-005",
+    "agent": "enablement",
+    "role": "se",
+    "orgId": "portfolio-org",
+    "input": "What discount has Acme Corp negotiated with Cloudflare?",
+    "expected": {
+      "topics_covered": ["discount", "no record"],
+      "tools_expected": ["kb_search"],
+      "max_latency_ms": 35000
+    },
+    "expected_facts": [
+      { "fact": "35%", "kind": "forbidden", "aliases": ["35 percent", "35% off", "35 % off"] }
+    ],
+    "rubric": "Negative / cross-org case. Acme's 35% discount chunk belongs to orgId=acme. This request runs as portfolio-org, so org-isolation (Week 1) must prevent that chunk from being retrieved. A faithful answer says it has no record of Acme's discount. If the response states 35% — a value never retrieved for this org — that is a hallucination AND an isolation concern at the generation layer."
+  }
+]

@@ -2,9 +2,10 @@
 # tests/run_eval.sh
 #
 # One command to run the full SE Intel eval harness:
-#   Step 1: runner.py  — call live API, record raw results
-#   Step 2: judge.py   — score each result with LLM-as-judge
-#   Step 3: report.py  — print scored report + regression diff
+#   Step 1: runner.py        — call live API (?debug=true), record raw results + retrieved chunks
+#   Step 2: faithfulness.py  — deterministic grounding check (the CI gate)
+#   Step 3: judge.py         — score each result with LLM-as-judge (incl. faithfulness dim)
+#   Step 4: report.py        — print scored report + faithfulness section + regression diff
 #
 # Usage:
 #   cd evaluation-harness
@@ -73,17 +74,28 @@ if grep -q "PASTE_YOUR_NEW_TOKEN_HERE" .env 2>/dev/null; then
 fi
 
 # ── Step 1: Runner ────────────────────────────────────────────────────────────
-echo -e "${BOLD}Step 1/3 — Running test cases${RESET}"
+echo -e "${BOLD}Step 1/4 — Running test cases${RESET}"
 python3 eval/runner.py $RUNNER_ARGS
 echo ""
 
-# ── Step 2: Judge ─────────────────────────────────────────────────────────────
-echo -e "${BOLD}Step 2/3 — Scoring with LLM-as-judge${RESET}"
+# ── Step 2: Faithfulness (deterministic CI gate) ───────────────────────────────
+# Runs BEFORE the LLM judge. In CI mode this gate blocks deploy on any
+# grounding_fail / hallucination_fail — deterministic, no LLM, can't be masked.
+echo -e "${BOLD}Step 2/4 — Deterministic faithfulness check${RESET}"
+if [ "$CI_MODE" = true ]; then
+  python3 eval/faithfulness.py --latest --ci
+else
+  python3 eval/faithfulness.py --latest
+fi
+echo ""
+
+# ── Step 3: Judge ─────────────────────────────────────────────────────────────
+echo -e "${BOLD}Step 3/4 — Scoring with LLM-as-judge${RESET}"
 python3 eval/judge.py --latest
 echo ""
 
-# ── Step 3: Report ────────────────────────────────────────────────────────────
-echo -e "${BOLD}Step 3/3 — Generating report${RESET}"
+# ── Step 4: Report ────────────────────────────────────────────────────────────
+echo -e "${BOLD}Step 4/4 — Generating report${RESET}"
 if [ "$CI_MODE" = true ]; then
   python3 eval/report.py --ci
 else

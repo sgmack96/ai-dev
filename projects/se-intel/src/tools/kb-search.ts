@@ -19,7 +19,7 @@
  *   can fall back to web search or answer from model knowledge.
  */
 
-import type { Env, KBNamespace, Role, ToolCall } from "../types/index.js";
+import type { Env, KBNamespace, RetrievedChunk, Role, ToolCall } from "../types/index.js";
 import { ROLE_KB_ACCESS } from "../types/index.js";
 
 const TOP_K = 5;
@@ -64,7 +64,17 @@ export async function kbSearchRaw(
   // Embed the query
   const embedResponse = await env.AI.run(
     "@cf/baai/bge-base-en-v1.5" as "@cf/baai/bge-base-en-v1.5",
-    { text: [query] }
+    { text: [query] },
+    {
+      gateway: {
+        id: "se-intel-gateway",
+        metadata: {
+          user_role: role,
+          org_id: orgId,
+          call_type: "embedding",
+        },
+      },
+    }
   );
   const queryVector = (embedResponse as { data?: number[][] }).data?.[0];
   if (!queryVector || queryVector.length === 0) {
@@ -116,6 +126,9 @@ export async function kbSearchRaw(
  * @param env       - Worker bindings
  * @param toolCalls - Audit array to append this tool call to
  * @param namespace - Optional: restrict to a specific namespace
+ * @param capturedChunks - Optional (debug/eval mode): the raw chunks that were
+ *   retrieved AND injected are pushed here, so the eval harness can run a
+ *   deterministic faithfulness check against exactly what the LLM saw.
  */
 export async function kbSearch(
   query: string,
@@ -123,7 +136,8 @@ export async function kbSearch(
   orgId: string,
   env: Env,
   toolCalls: ToolCall[],
-  namespace?: KBNamespace
+  namespace?: KBNamespace,
+  capturedChunks?: RetrievedChunk[]
 ): Promise<string | null> {
   const start = Date.now();
 
@@ -133,6 +147,19 @@ export async function kbSearch(
   } catch (err) {
     console.error("[kb-search] retrieval error:", err);
     return null;
+  }
+
+  // Debug/eval mode: record exactly the chunks we retrieved (and will inject).
+  // This is the single source of truth for the faithfulness check — no second query.
+  if (capturedChunks) {
+    for (const r of topResults) {
+      capturedChunks.push({
+        namespace: r.namespace,
+        orgId: r.orgId,
+        content: r.content,
+        score: r.score,
+      });
+    }
   }
 
   const durationMs = Date.now() - start;

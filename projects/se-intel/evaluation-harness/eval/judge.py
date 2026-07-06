@@ -10,13 +10,14 @@ For each test case result it:
   3. Parses the JSON scores (groundedness, relevance, role_appropriateness, actionability)
   4. Writes scores back into the results file in-place
 
-Scoring dimensions (0-3 each, 12 points total):
+Scoring dimensions (0-3 each, 15 points total):
   groundedness        — does it cite real products/facts or hallucinate?
   relevance           — does it answer what was actually asked?
   role_appropriateness — is the depth/tone right for the role?
   actionability       — can a rep use this in a call TODAY?
+  faithfulness        — does it use the chunks that were actually retrieved?
 
-Pass threshold: 8/12
+Pass threshold: 10/15
 
 Usage:
   python eval/judge.py eval/results/run_20260602_143022.json
@@ -48,7 +49,7 @@ RESULTS_DIR   = Path(__file__).parent / "results"
 JUDGE_MODEL   = "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
 CF_AI_URL     = f"https://api.cloudflare.com/client/v4/accounts/{CF_ACCOUNT_ID}/ai/run/{JUDGE_MODEL}"
 
-PASS_THRESHOLD = 8   # out of 12
+PASS_THRESHOLD = 10   # out of 15
 RETRY_ATTEMPTS = 2
 RETRY_DELAY_S  = 3
 
@@ -73,6 +74,20 @@ def build_judge_prompt(result: dict) -> str:
     if len(response) > 1500:
         response = response[:1500] + "\n[... response truncated for evaluation ...]"
 
+    # Format the retrieved KB chunks so the judge can score faithfulness:
+    # "did the response use what was actually retrieved?"
+    chunks = result.get("retrieved_chunks") or []
+    if chunks:
+        chunk_lines = []
+        for i, ch in enumerate(chunks, 1):
+            content = ch.get("content", "")
+            if len(content) > 400:
+                content = content[:400] + " [...]"
+            chunk_lines.append(f"  [chunk {i}] (score {ch.get('score', 0):.2f}) {content}")
+        chunks_str = "\n".join(chunk_lines)
+    else:
+        chunks_str = "  (no KB chunks were retrieved for this request)"
+
     return f"""You are a rigorous evaluator for an enterprise AI sales assistant called SE Intel.
 Your job is to score a response on four dimensions. Be critical — a score of 3 means genuinely excellent, not just acceptable. A score of 2 means good. A score of 1 means acceptable but flawed. A score of 0 means failing.
 
@@ -84,6 +99,9 @@ Question asked: {result['input']}
 
 === EVALUATION RUBRIC ===
 {result['rubric']}
+
+=== RETRIEVED KB CHUNKS (what the system actually retrieved for this request) ===
+{chunks_str}
 
 === ACTUAL RESPONSE ===
 {response}
@@ -119,6 +137,13 @@ Score each dimension 0-3:
    1 = Contains useful information but needs significant reframing to use
    0 = Cannot be used in a sales context without complete rewriting
 
+5. FAITHFULNESS (0-3) — grounding in the RETRIEVED KB CHUNKS above
+   3 = Every specific claim (numbers, product names, facts) traces to a retrieved chunk; nothing contradicts the chunks
+   2 = Mostly reflects the retrieved chunks; minor unsupported additions
+   1 = Partially uses the chunks but adds notable unverifiable claims, OR omits key retrieved facts
+   0 = Contradicts the retrieved chunks (e.g. chunk says 35%, answer says 25%) OR ignores them entirely and answers from general knowledge
+   NOTE: If no chunks were retrieved, score faithfulness 3 only if the response avoids inventing specific figures; score 0 if it fabricates specifics.
+
 === IMPORTANT ===
 You MUST respond with ONLY valid JSON. No preamble, no explanation outside the JSON.
 The "reasoning" field must explain your scores in 2-3 sentences.
@@ -128,7 +153,8 @@ The "reasoning" field must explain your scores in 2-3 sentences.
   "relevance": <integer 0-3>,
   "role_appropriateness": <integer 0-3>,
   "actionability": <integer 0-3>,
-  "total": <sum of all four scores>,
+  "faithfulness": <integer 0-3>,
+  "total": <sum of all five scores>,
   "passed": <true if total >= {PASS_THRESHOLD} else false>,
   "reasoning": "<2-3 sentences explaining the scores>"
 }}"""
@@ -210,7 +236,7 @@ def call_judge(client: httpx.Client, prompt: str) -> Optional[dict]:
 
 def validate_scores(data: dict) -> Optional[dict]:
     """Validate and normalise a scores dict that arrived already parsed."""
-    required = {"groundedness", "relevance", "role_appropriateness", "actionability"}
+    required = {"groundedness", "relevance", "role_appropriateness", "actionability", "faithfulness"}
     if not required.issubset(data.keys()):
         return None
     for key in required:
@@ -246,7 +272,7 @@ def parse_scores(raw: str) -> Optional[dict]:
         return None
 
     # Validate required fields
-    required = {"groundedness", "relevance", "role_appropriateness", "actionability"}
+    required = {"groundedness", "relevance", "role_appropriateness", "actionability", "faithfulness"}
     if not required.issubset(data.keys()):
         return None
 
@@ -360,9 +386,10 @@ def main() -> None:
                 f"G={scores['groundedness']} "
                 f"R={scores['relevance']} "
                 f"RA={scores['role_appropriateness']} "
-                f"A={scores['actionability']}"
+                f"A={scores['actionability']} "
+                f"F={scores['faithfulness']}"
             )
-            print(f"  {status}  {scores['total']:2d}/12  {DIM}{dims}{RESET}")
+            print(f"  {status}  {scores['total']:2d}/15  {DIM}{dims}{RESET}")
 
             if not scores["passed"]:
                 failed += 1

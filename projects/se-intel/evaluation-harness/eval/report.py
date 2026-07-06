@@ -33,17 +33,18 @@ BOLD   = "\033[1m"
 RESET  = "\033[0m"
 
 RESULTS_DIR    = Path(__file__).parent / "results"
-PASS_THRESHOLD = 8
+PASS_THRESHOLD = 10           # out of 15 (5 dimensions × 3)
+MAX_SCORE      = 15
 CI_PASS_RATE   = 80.0  # % of cases that must pass for CI green
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
-def score_bar(score: int, max_score: int = 12) -> str:
+def score_bar(score: int, max_score: int = MAX_SCORE) -> str:
     """Visual bar: ████░░ style."""
     filled = round((score / max_score) * 10)
     bar    = "█" * filled + "░" * (10 - filled)
-    colour = GREEN if score >= PASS_THRESHOLD else (YELLOW if score >= 6 else RED)
+    colour = GREEN if score >= PASS_THRESHOLD else (YELLOW if score >= MAX_SCORE / 2 else RED)
     return f"{colour}{bar}{RESET} {score}/{max_score}"
 
 
@@ -117,7 +118,7 @@ def print_report(data: dict, prev_data: Optional[dict] = None) -> float:
     print()
 
     # ── Per-case scores ─────────────────────────────────────────────────────────
-    print(f"{BOLD}Per-Case Scores{RESET}  (G=Groundedness R=Relevance RA=Role-Appropriateness A=Actionability)")
+    print(f"{BOLD}Per-Case Scores{RESET}  (G=Groundedness R=Relevance RA=Role-Appropriateness A=Actionability F=Faithfulness)")
     print(f"{'─' * 60}")
 
     for r in sorted(results, key=lambda x: x["id"]):
@@ -129,7 +130,8 @@ def print_report(data: dict, prev_data: Optional[dict] = None) -> float:
             f"G={dim_bar(s['groundedness'])} "
             f"R={dim_bar(s['relevance'])} "
             f"RA={dim_bar(s['role_appropriateness'])} "
-            f"A={dim_bar(s['actionability'])}"
+            f"A={dim_bar(s['actionability'])} "
+            f"F={dim_bar(s.get('faithfulness', 0))}"
         )
         latency = f"{r.get('latency_ms', 0) / 1000:.1f}s"
         print(
@@ -194,13 +196,44 @@ def print_report(data: dict, prev_data: Optional[dict] = None) -> float:
         scores   = [r["total_score"] for r in role_results]
         passed_n = sum(1 for r in role_results if r["passed"])
         avg_s    = avg(scores)
-        colour   = GREEN if avg_s >= PASS_THRESHOLD else (YELLOW if avg_s >= 6 else RED)
+        colour   = GREEN if avg_s >= PASS_THRESHOLD else (YELLOW if avg_s >= MAX_SCORE / 2 else RED)
         print(
             f"  {role:15s}  {passed_n}/{len(role_results)} passed  "
-            f"{colour}avg {avg_s:.1f}/12{RESET}"
+            f"{colour}avg {avg_s:.1f}/{MAX_SCORE}{RESET}"
         )
 
     print()
+
+    # ── Faithfulness (deterministic, from faithfulness.py) ───────────────────────
+    fchecked = [r for r in results if r.get("faithfulness")]
+    if fchecked:
+        print(f"{BOLD}Faithfulness{RESET}  {DIM}(deterministic string-grounding — the CI gate){RESET}")
+        print(f"{'─' * 40}")
+        gf = hf = rf = 0
+        for r in sorted(fchecked, key=lambda x: x["id"]):
+            f = r["faithfulness"]
+            gf += f["grounding_fails"]
+            hf += f["hallucination_fails"]
+            rf += f["retrieval_fails"]
+            fstatus = f"{GREEN}PASS{RESET}" if f["passed"] else f"{RED}FAIL{RESET}"
+            detail = ""
+            if f["grounding_fails"]:
+                bad = [fr["fact"] for fr in f["facts"] if fr["status"] == "grounding_fail"]
+                detail = f"  {RED}dropped: {', '.join(bad)}{RESET}"
+            elif f["hallucination_fails"]:
+                bad = [fr["fact"] for fr in f["facts"] if fr["status"] == "hallucination_fail"]
+                detail = f"  {RED}invented: {', '.join(bad)}{RESET}"
+            elif f["retrieval_fails"]:
+                bad = [fr["fact"] for fr in f["facts"] if fr["status"] == "retrieval_fail"]
+                detail = f"  {YELLOW}retrieval miss: {', '.join(bad)}{RESET}"
+            print(f"  {r['id']:10s} {fstatus}{detail}")
+        gate_colour = RED if (gf + hf) else GREEN
+        print(
+            f"  {DIM}grounding_fails={RESET}{gate_colour}{gf}{RESET}  "
+            f"{DIM}hallucination_fails={RESET}{gate_colour}{hf}{RESET}  "
+            f"{DIM}retrieval_misses={YELLOW}{rf}{RESET}"
+        )
+        print()
 
     # ── Overall ─────────────────────────────────────────────────────────────────
     total_passed = sum(1 for r in results if r["passed"])
@@ -269,13 +302,13 @@ def print_regression(current: dict, previous: dict) -> None:
     if regressions:
         print(f"{BOLD}{RED}Regressions (dropped ≥2 points):{RESET}")
         for case_id, prev_s, curr_s, diff in regressions:
-            print(f"  {case_id:10s}  {prev_s}/12 → {curr_s}/12  {RED}({diff}){RESET}")
+            print(f"  {case_id:10s}  {prev_s}/{MAX_SCORE} → {curr_s}/{MAX_SCORE}  {RED}({diff}){RESET}")
         print()
 
     if improvements:
         print(f"{BOLD}{GREEN}Improvements (gained ≥2 points):{RESET}")
         for case_id, prev_s, curr_s, diff in improvements:
-            print(f"  {case_id:10s}  {prev_s}/12 → {curr_s}/12  {GREEN}(+{diff}){RESET}")
+            print(f"  {case_id:10s}  {prev_s}/{MAX_SCORE} → {curr_s}/{MAX_SCORE}  {GREEN}(+{diff}){RESET}")
         print()
 
 

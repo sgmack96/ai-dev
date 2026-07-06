@@ -44,6 +44,18 @@ export interface AgentRequest {
   message: string;
   threadId: string;      // conversation session ID — user can have many threads
   userContext: UserContext;
+  debugMode?: boolean;   // when true, the agent returns the raw KB chunks it retrieved (eval harness only)
+}
+
+// ── Retrieved Chunk (debug/eval only) ───────────────────────────────────────────
+// A flattened view of a KB chunk that was retrieved for a request.
+// Returned only when debugMode=true so the eval harness can run a deterministic
+// faithfulness check: "did the response actually use the chunks we retrieved?"
+export interface RetrievedChunk {
+  namespace: string;
+  orgId: string;
+  content: string;
+  score: number;
 }
 
 // ── Agent Response ────────────────────────────────────────────────────────────
@@ -53,6 +65,7 @@ export interface AgentResponse {
   model: string;
   latencyMs: number;
   toolsUsed: string[];
+  retrievedChunks?: RetrievedChunk[];  // present only when the request set debugMode=true
 }
 
 // ── Audit Event ───────────────────────────────────────────────────────────────
@@ -98,6 +111,21 @@ export interface Env {
   ENVIRONMENT: string;
   JWT_AUDIENCE: string;
   JWT_SECRET?: string;   // set via wrangler secret
+}
+
+// ── Metric Row ────────────────────────────────────────────────────────────────
+// Shape of a row in the request_metrics D1 table.
+export interface MetricRow {
+  id: string;
+  timestamp: number;
+  orgId: string;
+  userId: string;
+  agentType: AgentType;
+  latencyMs: number;
+  kbChunksUsed: number;
+  toolsCalled: string[];
+  status: "success" | "error" | "rate_limited";
+  errorType?: string;
 }
 
 // ── Rate Limit Result ─────────────────────────────────────────────────────────

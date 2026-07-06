@@ -27,7 +27,7 @@
 import { BaseAgent } from "./base-agent.js";
 import { kbSearch } from "../tools/kb-search.js";
 import { webSearch } from "../tools/web-search.js";
-import type { Env, ToolCall, UserContext, KBNamespace } from "../types/index.js";
+import type { Env, RetrievedChunk, ToolCall, UserContext, KBNamespace } from "../types/index.js";
 
 /**
  * Always return undefined — query all allowed namespaces for this role.
@@ -81,6 +81,8 @@ ${accessHint[userContext.role] ?? accessHint["ae"]}
 
 CRITICAL RULE: You will be given [Tool Results] with KB content. Use the specific facts from that content — product names, pricing tiers, steps, and frameworks. Do not speak vaguely when specific information is available. A response that ignores the KB context and answers from general knowledge will fail.
 
+GROUNDING RULE (non-negotiable): When the KB content contains a specific named fact — a standard or framework (e.g. WinterCG), a certification (e.g. SOC 2 Type II, ISO 27001), a named figure (e.g. "35% discount", "sub-5ms cold start"), or a specific product name — you MUST cite that exact named fact verbatim in your answer. Do not paraphrase a named standard into a generic concept (e.g. do not replace "WinterCG-compliant" with just "open standards"). If the KB gave you the specific term, the rep needs the specific term to use in the call. Never state a number that differs from the KB; if the KB says 35%, never say 25%.
+
 DEPTH RULE for role "${userContext.role}": ${
   userContext.role === "ae" || userContext.role === "csm"
     ? "This is a non-technical role. Cite business-level facts (ROI, cost comparisons, product names, outcomes). Do NOT include technical configuration steps, CLI commands, or implementation details — they will confuse the user."
@@ -118,7 +120,8 @@ User: ${userContext.name} (${userContext.role.toUpperCase()} at org: ${userConte
   protected async dispatchTools(
     message: string,
     userContext: UserContext,
-    toolCalls: ToolCall[]
+    toolCalls: ToolCall[],
+    capturedChunks?: RetrievedChunk[]
   ): Promise<string | null> {
     const contextParts: string[] = [];
 
@@ -132,7 +135,8 @@ User: ${userContext.name} (${userContext.role.toUpperCase()} at org: ${userConte
       userContext.orgId,
       this.env,
       toolCalls,
-      namespace
+      namespace,
+      capturedChunks
     );
 
     if (kbResult) {

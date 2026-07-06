@@ -27,7 +27,7 @@ import { BaseAgent } from "./base-agent.js";
 import { kbSearch } from "../tools/kb-search.js";
 import { webSearch } from "../tools/web-search.js";
 import { fetchNews } from "../tools/news.js";
-import type { Env, ToolCall, UserContext } from "../types/index.js";
+import type { Env, RetrievedChunk, ToolCall, UserContext } from "../types/index.js";
 
 // Keywords that signal the user is asking about a competitor or tech stack
 const TECH_STACK_KEYWORDS = [
@@ -134,7 +134,8 @@ User: ${userContext.name} (${userContext.role.toUpperCase()} at org: ${userConte
   protected async dispatchTools(
     message: string,
     userContext: UserContext,
-    toolCalls: ToolCall[]
+    toolCalls: ToolCall[],
+    capturedChunks?: RetrievedChunk[]
   ): Promise<string | null> {
     const lowerMessage = message.toLowerCase();
     const contextParts: string[] = [];
@@ -158,7 +159,7 @@ User: ${userContext.name} (${userContext.role.toUpperCase()} at org: ${userConte
       ? `${message} Cloudflare opportunities ${hasTechStack ? "migration" : ""}`
       : message;
 
-    const kbResult = await kbSearch(kbQuery, userContext.role, userContext.orgId, this.env, toolCalls);
+    const kbResult = await kbSearch(kbQuery, userContext.role, userContext.orgId, this.env, toolCalls, undefined, capturedChunks);
     if (kbResult) contextParts.push(kbResult);
 
     // ── 3. Web search (for general research or when KB comes up empty) ──────────

@@ -58,10 +58,17 @@ def log(msg: str, colour: str = "") -> None:
 
 _token_cache: dict[str, str] = {}
 
-def get_token(client: httpx.Client, role: str) -> str:
-    """Get (or reuse) a dev JWT for a given role."""
-    if role in _token_cache:
-        return _token_cache[role]
+def get_token(client: httpx.Client, role: str, org_id: str = "eval-org") -> str:
+    """
+    Get (or reuse) a dev JWT for a given role + org.
+
+    Tokens are cached per (role, org_id). orgId matters for faithfulness cases:
+    a case that probes acme's private "35% discount" chunk must run under
+    orgId=acme, or the org-isolation filter (correctly) hides that chunk.
+    """
+    cache_key = f"{role}:{org_id}"
+    if cache_key in _token_cache:
+        return _token_cache[cache_key]
 
     user_id = f"eval-{role}-{uuid.uuid4().hex[:6]}"
     names = {
@@ -78,13 +85,13 @@ def get_token(client: httpx.Client, role: str) -> str:
             "userId": user_id,
             "role": role,
             "name": names.get(role, f"Eval {role.upper()}"),
-            "orgId": "eval-org",
+            "orgId": org_id,
         },
         timeout=15,
     )
     resp.raise_for_status()
     token = resp.json()["token"]
-    _token_cache[role] = token
+    _token_cache[cache_key] = token
     return token
 
 
@@ -112,15 +119,19 @@ def run_case(client: httpx.Client, case: dict) -> dict:
     role    = case["role"]
     message = case["input"]
     case_id = case["id"]
+    org_id  = case.get("orgId", "eval-org")
 
-    token     = get_token(client, role)
+    token     = get_token(client, role, org_id)
     thread_id = f"eval-{case_id}-{uuid.uuid4().hex[:8]}"
-    endpoint  = f"{BASE_URL}/api/v1/{agent}"
+    # ?debug=true makes the API return the raw KB chunks it retrieved, so the
+    # faithfulness checker can compare retrieval against the generated response.
+    endpoint  = f"{BASE_URL}/api/v1/{agent}?debug=true"
 
     start = time.time()
     error = None
     response_text = None
     tools_used: list[str] = []
+    retrieved_chunks: list[dict] = []
     http_status = None
 
     try:
@@ -137,9 +148,10 @@ def run_case(client: httpx.Client, case: dict) -> dict:
         elapsed_ms  = int((time.time() - start) * 1000)
 
         if resp.status_code == 200:
-            data          = resp.json()
-            response_text = data.get("response", "")
-            tools_used    = data.get("toolsUsed") or []
+            data             = resp.json()
+            response_text    = data.get("response", "")
+            tools_used       = data.get("toolsUsed") or []
+            retrieved_chunks = data.get("retrievedChunks") or []
         else:
             error = f"HTTP {resp.status_code}: {resp.text[:200]}"
 
@@ -159,18 +171,24 @@ def run_case(client: httpx.Client, case: dict) -> dict:
         "id":           case_id,
         "agent":        agent,
         "role":         role,
+        "orgId":        org_id,
         "input":        message,
         "rubric":       case.get("rubric", ""),
         "expected":     case.get("expected", {}),
+        "expected_facts": case.get("expected_facts", []),  # used by faithfulness.py
         "_source_file": case.get("_source_file", ""),
 
         # Actual results
-        "response":        response_text,
-        "tools_used":      tools_used,
-        "latency_ms":      elapsed_ms,
-        "http_status":     http_status,
-        "error":           error,
-        "too_slow":        too_slow,
+        "response":         response_text,
+        "tools_used":       tools_used,
+        "retrieved_chunks": retrieved_chunks,  # raw KB chunks the agent retrieved (debug mode)
+        "latency_ms":       elapsed_ms,
+        "http_status":      http_status,
+        "error":            error,
+        "too_slow":         too_slow,
+
+        # Placeholder — faithfulness.py fills these in
+        "faithfulness":     None,
 
         # Placeholder — judge.py fills these in
         "scores":          None,
@@ -233,15 +251,17 @@ def main() -> None:
     errored = 0
 
     with httpx.Client() as client:
-        # Pre-fetch tokens for all required roles
-        roles_needed = sorted({c["role"] for c in cases})
-        log(f"Fetching tokens for roles: {', '.join(roles_needed)}")
-        for role in roles_needed:
+        # Pre-fetch tokens for all required (role, org) pairs.
+        # org matters: faithfulness cases targeting acme's private chunks must
+        # run under orgId=acme or the isolation filter hides those chunks.
+        pairs_needed = sorted({(c["role"], c.get("orgId", "eval-org")) for c in cases})
+        log(f"Fetching tokens for {len(pairs_needed)} role/org pair(s)")
+        for role, org_id in pairs_needed:
             try:
-                get_token(client, role)
-                log(f"  {GREEN}✓{RESET} {role}")
+                get_token(client, role, org_id)
+                log(f"  {GREEN}✓{RESET} {role} @ {org_id}")
             except Exception as exc:
-                log(f"  {RED}✗{RESET} {role}: {exc}")
+                log(f"  {RED}✗{RESET} {role} @ {org_id}: {exc}")
                 sys.exit(1)
 
         print()
