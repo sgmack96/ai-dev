@@ -76,6 +76,7 @@ run_probe() {
   local response
   response=$(curl -sX POST "$BASE_URL$endpoint" \
     -H "Authorization: Bearer $SECRET" \
+    -H "CF-Access-Jwt-Assertion: probe" \
     -H "Content-Type: application/json" \
     -d "$payload" 2>&1)
 
