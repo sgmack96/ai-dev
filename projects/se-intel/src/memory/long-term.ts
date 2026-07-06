@@ -204,6 +204,16 @@ or
           ],
           max_tokens: 150,
           temperature: 0.1,
+        },
+        {
+          gateway: {
+            id: "se-intel-gateway",
+            metadata: {
+              user_id: this.userId,
+              org_id: this.orgId,
+              call_type: "ltm_extraction",
+            },
+          },
         }
       );
 

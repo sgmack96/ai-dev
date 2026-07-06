@@ -27,6 +27,7 @@ import { checkRateLimit } from "./auth/ratelimit.js";
 import { getUIHtml } from "./ui.js";
 import { LongTermMemory } from "./memory/long-term.js";
 import { kbSearchRaw } from "./tools/kb-search.js";
+import { getOrgHealth, SLO } from "./observability/metrics.js";
 import type { Env, Role } from "./types/index.js";
 
 // Re-export DO classes so wrangler can find them
@@ -38,6 +39,28 @@ export { TranscriptAgent } from "./agents/transcript.js";
 import { seedVectorize } from "../scripts/seed-kb.js";
 
 const app = new Hono<{ Bindings: Env }>();
+
+// ── Cloudflare Access JWT guard ───────────────────────────────────────────────
+// Rejects requests that don't come through Access (no JWT header).
+// This closes the backdoor at the raw workers.dev URL.
+app.use("*", async (c, next) => {
+  const path = new URL(c.req.url).pathname;
+
+  // Allow health check and Cloudflare internals without Access JWT
+  if (path === "/health" || path.startsWith("/cdn-cgi/")) {
+    return next();
+  }
+
+  const jwt = c.req.header("CF-Access-Jwt-Assertion");
+  if (!jwt) {
+    return c.json(
+      { error: "Unauthorized — access via se-intel.macksportreport.com" },
+      401
+    );
+  }
+
+  return next();
+});
 
 // ── Chat UI ───────────────────────────────────────────────────────────────────
 app.get("/", (c) => {
@@ -170,6 +193,7 @@ app.post("/api/v1/account", async (c) => {
   }
 
   const tid = threadId ?? crypto.randomUUID();
+  const debugMode = c.req.query("debug") === "true";
 
   // Get (or create) DO stub for this user
   const doId = c.env.ACCOUNT_AGENT.idFromName(`${userContext!.orgId}:${userContext!.userId}`);
@@ -180,7 +204,7 @@ app.post("/api/v1/account", async (c) => {
     new Request("https://do-internal/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message, threadId: tid, userContext }),
+      body: JSON.stringify({ message, threadId: tid, userContext, debugMode }),
     })
   );
 
@@ -207,6 +231,7 @@ app.post("/api/v1/enablement", async (c) => {
   }
 
   const tid = threadId ?? crypto.randomUUID();
+  const debugMode = c.req.query("debug") === "true";
 
   const doId = c.env.ENABLEMENT_AGENT.idFromName(`${userContext!.orgId}:${userContext!.userId}`);
   const stub = c.env.ENABLEMENT_AGENT.get(doId);
@@ -215,7 +240,7 @@ app.post("/api/v1/enablement", async (c) => {
     new Request("https://do-internal/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message, threadId: tid, userContext }),
+      body: JSON.stringify({ message, threadId: tid, userContext, debugMode }),
     })
   );
 
@@ -737,6 +762,66 @@ app.post("/admin/audit-probe", async (c) => {
   });
 });
 
+// ── Account health scorecard (self-service) ───────────────────────────────────
+// Returns SLO metrics for the caller's org over the last 24h.
+// sales_manager sees all orgs; everyone else sees only their own.
+//   GET /api/v1/health?window=24
+app.get("/api/v1/health", async (c) => {
+  const userContext = c.get("userContext" as never) as Awaited<
+    ReturnType<typeof extractUserContext>
+  >;
+
+  const windowHours = Math.min(parseInt(c.req.query("window") ?? "24"), 168); // max 7d
+  const isManager = userContext!.role === "sales_manager";
+
+  // Managers see all orgs, everyone else is scoped to their own
+  const orgFilter = isManager ? null : userContext!.orgId;
+  const data = await getOrgHealth(orgFilter, windowHours, c.env);
+
+  return c.json({
+    callerOrgId: userContext!.orgId,
+    callerRole: userContext!.role,
+    scope: isManager ? "all_orgs" : "own_org",
+    windowHours,
+    sloTargets: {
+      p95LatencyMs: SLO.P95_LATENCY_MS,
+      errorRatePct: SLO.ERROR_RATE_PCT,
+    },
+    orgs: data,
+  });
+});
+
+// ── Admin health scorecard (all orgs, no auth scoping) ────────────────────────
+// Requires JWT_SECRET bearer — used by ops/TAM for cross-org visibility.
+//   GET /admin/health-scorecard?window=24
+app.get("/admin/health-scorecard", async (c) => {
+  const secret = c.env.JWT_SECRET;
+  if (secret) {
+    const auth = c.req.header("Authorization");
+    if (!auth || auth !== `Bearer ${secret}`) {
+      return c.json({ error: "Unauthorized" }, { status: 401 });
+    }
+  }
+
+  const windowHours = Math.min(parseInt(c.req.query("window") ?? "24"), 168);
+  const data = await getOrgHealth(null, windowHours, c.env);
+
+  const allPassing = data.every(
+    (d) => d.slos.latency.passing && d.slos.errorRate.passing
+  );
+
+  return c.json({
+    status: allPassing ? "healthy" : "degraded",
+    windowHours,
+    sloTargets: {
+      p95LatencyMs: SLO.P95_LATENCY_MS,
+      errorRatePct: SLO.ERROR_RATE_PCT,
+    },
+    orgCount: data.length,
+    orgs: data,
+  });
+});
+
 // ── 404 fallback ──────────────────────────────────────────────────────────────
 app.notFound((c) => {
   return c.json(
@@ -746,14 +831,16 @@ app.notFound((c) => {
         "POST /api/v1/account",
         "POST /api/v1/enablement",
         "GET  /api/v1/audit",
+        "GET  /api/v1/health",
         "GET  /api/v1/history/:agent?threadId=<id>",
         "GET  /health",
-        "POST /dev/token       (portfolio only)",
-        "POST /admin/seed      (requires JWT_SECRET bearer)",
+        "POST /dev/token              (portfolio only)",
+        "POST /admin/seed             (requires JWT_SECRET bearer)",
         "GET  /admin/seed/status",
-        "POST /admin/kb-probe  (requires JWT_SECRET bearer)",
-        "POST /admin/memory-probe (requires JWT_SECRET bearer)",
-        "POST /admin/audit-probe  (requires JWT_SECRET bearer)",
+        "GET  /admin/health-scorecard (requires JWT_SECRET bearer)",
+        "POST /admin/kb-probe         (requires JWT_SECRET bearer)",
+        "POST /admin/memory-probe     (requires JWT_SECRET bearer)",
+        "POST /admin/audit-probe      (requires JWT_SECRET bearer)",
       ],
     },
     404

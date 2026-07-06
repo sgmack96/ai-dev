@@ -44,7 +44,7 @@ database_id = "b47682bc-f4cf-498c-8455-5b70c3313cae"
 binding = "VECTORIZE"
 index_name = "se-intel-portfolio-kb"
 
-# ── Workers AI ────────────────────────────────────────────────────────────────
+# ── Workers AI (gateway routing configured per-call in TypeScript, not here)
 [ai]
 binding = "AI"
 

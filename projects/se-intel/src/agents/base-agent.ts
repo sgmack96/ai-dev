@@ -19,12 +19,14 @@
 
 import { ShortTermMemory } from "../memory/short-term.js";
 import { LongTermMemory } from "../memory/long-term.js";
+import { writeMetric } from "../observability/metrics.js";
 import type {
   AgentRequest,
   AgentResponse,
   AgentType,
   AuditEvent,
   Env,
+  RetrievedChunk,
   ToolCall,
   UserContext,
 } from "../types/index.js";
@@ -79,7 +81,7 @@ export abstract class BaseAgent implements DurableObject {
       return Response.json({ error: "Invalid JSON body" }, { status: 400 });
     }
 
-    const { message, threadId, userContext } = body;
+    const { message, threadId, userContext, debugMode } = body;
 
     if (!message || !threadId || !userContext) {
       return Response.json({ error: "Missing required fields" }, { status: 400 });
@@ -104,7 +106,10 @@ export abstract class BaseAgent implements DurableObject {
 
     // Dispatch tools if needed (agent-specific, role-gated)
     const toolCalls: ToolCall[] = [];
-    const toolContext = await this.dispatchTools(message, userContext, toolCalls);
+    // In debug/eval mode, capture the raw KB chunks the agent retrieved so the
+    // response can carry them back for a deterministic faithfulness check.
+    const capturedChunks: RetrievedChunk[] | undefined = debugMode ? [] : undefined;
+    const toolContext = await this.dispatchTools(message, userContext, toolCalls, capturedChunks);
 
     // If tools returned context, inject it before the user message
     if (toolContext) {
@@ -120,7 +125,18 @@ export abstract class BaseAgent implements DurableObject {
       const aiResponse = await this.env.AI.run(MODEL, {
         messages,
         max_tokens: 1024,
-      } as Parameters<Ai["run"]>[1]);
+      } as Parameters<Ai["run"]>[1], {
+        gateway: {
+          id: "se-intel-gateway",
+          metadata: {
+            user_id: userContext.userId,
+            user_role: userContext.role,
+            org_id: userContext.orgId,
+            agent_type: this.agentType,
+            call_type: "chat",
+          },
+        },
+      });
 
       // Workers AI returns { response: string } for chat models
       const result = aiResponse as { response?: string };
@@ -176,6 +192,19 @@ export abstract class BaseAgent implements DurableObject {
       }).catch((err) => console.error("[audit] D1 write error:", err))
     );
 
+    // Write observability metric — non-blocking, never surfaces to user
+    this.state.waitUntil(
+      writeMetric({
+        orgId: userContext.orgId,
+        userId: userContext.userId,
+        agentType: this.agentType,
+        latencyMs,
+        kbChunksUsed: capturedChunks?.length ?? toolCalls.filter((t) => t.toolName === "kb_search").length,
+        toolsCalled: toolCalls.map((t) => t.toolName),
+        status: "success",
+      }, this.env).catch((err) => console.error("[metrics] D1 write error:", err))
+    );
+
     // Extract and persist memorable facts — waitUntil keeps the DO alive
     const ltmWriter = new LongTermMemory(userContext.userId, userContext.orgId, this.env);
     this.state.waitUntil(
@@ -191,6 +220,11 @@ export abstract class BaseAgent implements DurableObject {
       latencyMs,
       toolsUsed: toolCalls.map((t) => t.toolName),
     };
+
+    // Only present in debug/eval mode — keeps normal prod payloads lean.
+    if (capturedChunks) {
+      response.retrievedChunks = capturedChunks;
+    }
 
     return Response.json(response);
   }
@@ -275,6 +309,18 @@ export abstract class BaseAgent implements DurableObject {
             messages,
             max_tokens: 1024,
             stream: true,
+          },
+          {
+            gateway: {
+              id: "se-intel-gateway",
+              metadata: {
+                user_id: userContext.userId,
+                user_role: userContext.role,
+                org_id: userContext.orgId,
+                agent_type: this.agentType,
+                call_type: "stream",
+              },
+            },
           }
         ) as ReadableStream;
 
@@ -353,6 +399,19 @@ export abstract class BaseAgent implements DurableObject {
         }).catch(() => {})
       );
 
+      // Write observability metric — non-blocking
+      this.state.waitUntil(
+        writeMetric({
+          orgId: userContext.orgId,
+          userId: userContext.userId,
+          agentType: this.agentType,
+          latencyMs,
+          kbChunksUsed: toolCalls.filter((t) => t.toolName === "kb_search").length,
+          toolsCalled: toolCalls.map((t) => t.toolName),
+          status: "success",
+        }, this.env).catch(() => {})
+      );
+
       // Extract and persist memorable facts — waitUntil keeps the DO alive
       const ltmWriter = new LongTermMemory(userContext.userId, userContext.orgId, this.env);
       this.state.waitUntil(
@@ -428,10 +487,15 @@ export abstract class BaseAgent implements DurableObject {
    *
    * IMPORTANT: Each tool must verify role permissions before executing.
    * Do not rely solely on the tool registry — enforce at execution time.
+   *
+   * @param capturedChunks - optional. When provided (debug/eval mode), the agent
+   *   pushes the raw KB chunks it retrieved into this array so the caller can run
+   *   a deterministic faithfulness check. KB chunks only — web/news are not captured.
    */
   protected abstract dispatchTools(
     message: string,
     userContext: UserContext,
-    toolCalls: ToolCall[]
+    toolCalls: ToolCall[],
+    capturedChunks?: RetrievedChunk[]
   ): Promise<string | null>;
 }

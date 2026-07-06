@@ -29,3 +29,25 @@ CREATE INDEX IF NOT EXISTS idx_audit_user    ON audit_log(user_id, timestamp DES
 CREATE INDEX IF NOT EXISTS idx_audit_org     ON audit_log(org_id, timestamp DESC);
 CREATE INDEX IF NOT EXISTS idx_audit_agent   ON audit_log(agent_type, timestamp DESC);
 CREATE INDEX IF NOT EXISTS idx_audit_thread  ON audit_log(thread_id);
+
+-- ── Request Metrics ───────────────────────────────────────────────────────────
+-- One row per agent request. Written non-blocking via state.waitUntil().
+-- Separate from audit_log: metrics are higher-frequency, write-only from the
+-- hot path, and optimised for time-series aggregation (p95, error rate, etc).
+-- SLOs evaluated at query time against this table.
+CREATE TABLE IF NOT EXISTS request_metrics (
+  id               TEXT    PRIMARY KEY,   -- UUID
+  timestamp        INTEGER NOT NULL,      -- Unix ms
+  org_id           TEXT    NOT NULL,
+  user_id          TEXT    NOT NULL,
+  agent_type       TEXT    NOT NULL,      -- account | enablement | transcript
+  latency_ms       INTEGER NOT NULL,
+  kb_chunks_used   INTEGER NOT NULL DEFAULT 0,
+  tools_called     TEXT    NOT NULL DEFAULT '[]',  -- JSON array of tool names
+  status           TEXT    NOT NULL,      -- success | error | rate_limited
+  error_type       TEXT                   -- null | model_error | timeout | auth
+);
+
+CREATE INDEX IF NOT EXISTS idx_metrics_org_time   ON request_metrics(org_id, timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_metrics_agent_time ON request_metrics(agent_type, timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_metrics_status     ON request_metrics(status, timestamp DESC);
