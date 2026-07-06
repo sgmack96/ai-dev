@@ -6,6 +6,161 @@
 
 ---
 
+## Date: 2026-07-06
+## Resource: Google SRE Book — "Embracing Risk" / error budgets (https://sre.google/sre-book/embracing-risk/) + STUDY.md — Chapter 12: Observability, SLOs, and the Health Scorecard
+## Time Spent: 45 min
+## Topics: SLO calibration, error budgets as a "cry wolf" problem, dependency-ordered probes, test drift vs regression
+## Connects to this week's target: Observability + SLOs + Account-Health Scorecard (Cycle 1 / Week 3) — closing the loop
+
+### Key Insight (one sentence)
+An SLO is only useful if it's occasionally achievable — a target set from a guess instead of measurement either fails permanently (and gets ignored) or passes trivially (and hides nothing), and the fix for both is the same: measure real traffic before you commit to a number.
+
+### How it connects to what I'm building
+The 06-26 entry in this log covers the SLI/SLO/SLA framework and the SQLite percentile
+mechanics while the target was still the original guess (`P95_LATENCY_MS: 8000`, verified
+live at `requestCount: 1`). What happened next, once real 70B+RAG traffic hit it, is the
+part worth logging on its own: both orgs came back `p95=13118ms` and `p95=11737ms` —
+both "failing" a target that was never based on anything real. The SRE book's framing of
+error budgets assumes the SLO itself is trustworthy; a target that's aspirational rather
+than measured breaks that assumption before you even get to the budget math. We
+recalibrated to 15000ms with the before/after numbers written into the code comment
+(`metrics.ts:20-32`) and into `CYCLE-1-WEEK-3-observability-slos.md`, plus a named
+improvement roadmap (KB answer caching, lower `max_tokens`, route simple queries to an
+8B model) so the new number isn't just a higher guess — it's a baseline with a plan.
+
+**Second insight, found while re-verifying today, not during the original build:**
+`tests/isolation-test.sh` (Week 1's capstone probe) started failing 3/3 today —
+`isolationOk: null`, `"Unauthorized — access via se-intel.macksportreport.com"`. Root
+cause: a global Cloudflare Access JWT guard was added to `index.ts` (`app.use("*", ...)`
+at `index.ts:46-63`) at some point after the Week 1 script was written, and it checks
+for the mere *presence* of a `CF-Access-Jwt-Assertion` header on every route. `health-probe.sh`
+already sends a dummy value for that header (`-H "CF-Access-Jwt-Assertion: probe"`) to get
+through the gate on the raw workers.dev URL; `isolation-test.sh`'s `run_probe()` never got
+the same header added. This is not a security regression — the isolation logic itself is
+untouched and passes once the header is added — it's **test drift**: a shared middleware
+change silently broke an older script that didn't know about it. Same category of bug as
+the Week 1/2 lesson (don't trust a test that can be silently invalidated), just at the
+harness layer instead of the application layer.
+
+### How I'd explain it to a customer / exec (practice out loud)
+We don't set reliability targets by guessing and hoping. We shipped a target, ran it
+against real usage, and found out it was wrong — the system was actually about 60% slower
+than we'd committed to. Instead of quietly lowering our own bar or leaving a dashboard that
+would always show red, we published the real numbers, set a new target based on what the
+architecture actually does — a large model doing retrieval and generation in one request —
+and wrote down three concrete ways we plan to bring that number down over time. A target
+you can't hit isn't a target, it's decoration. And separately: when we went to re-verify
+our isolation guarantees today, the test script itself had rotted — a security header
+requirement got added elsewhere in the app and the old test didn't know about it. We
+caught it immediately because the probe is deterministic, fixed the script in five minutes,
+and reconfirmed all three isolation layers are still intact. The lesson we keep relearning
+is the same one: tests have to be revisited every time the surrounding system changes, not
+just written once and trusted forever.
+
+### Tradeoff or open question
+The isolation-test.sh drift raises a real process question: how do you catch "a shared
+middleware change broke an unrelated test" *before* someone manually re-runs it weeks
+later? The honest answer right now is "you don't, unless it's in CI." `faithfulness.py --ci`
+and `health-probe.sh --ci` both already exist as gate-able scripts — `isolation-test.sh
+--ci` does too, but none of these run automatically on every deploy yet, so this exact
+kind of drift can sit undetected for an arbitrary amount of time. That's the natural
+next step once Cycle 1 closes: wire all three probes into an actual CI pipeline
+(GitHub Actions on push to `main`) instead of relying on remembering to run them by hand.
+
+---
+
+## Date: 2026-06-26
+## Resource: Google SRE Book — "Service Level Objectives" (https://sre.google/sre-book/service-level-objectives/) + STUDY.md — Chapter 10: Failure Modes and Trade-offs
+## Time Spent: 60 min
+## Topics: SLOs, SLIs, SLAs, error budgets, p95 latency, observability, metrics vs logs, D1 time-series
+## Connects to this week's target: Observability + SLOs + Account-Health Scorecard (Cycle 1 / Week 3)
+
+### Key Insight (one sentence)
+An SLO without an error budget is just a target — the error budget is what makes it operational, because it tells you how much you can afford to break before you have to stop shipping.
+
+### How it connects to what I'm building
+
+**The SLI/SLO/SLA stack:** The SRE book defines three levels. An SLI (Service Level Indicator) is the raw measurement — p95 latency in milliseconds, error rate as a percentage. An SLO is the target we commit to internally — p95 < 8000ms, error rate < 5%. An SLA is the external contract with a customer — what happens if we breach. We built SLIs and SLOs. We don't have an SLA yet because this is a portfolio system, but the architecture is ready for it.
+
+**Where each piece lives in the code:**
+- SLIs are emitted by `writeMetric()` in `src/observability/metrics.ts` — one row per request, `latency_ms` and `status` are the raw measurements.
+- SLOs are constants in `SLO` at `metrics.ts:17-21` — `P95_LATENCY_MS: 8000`, `ERROR_RATE_PCT: 5`. Evaluated at query time in `getOrgHealth()`, never hardcoded into the data.
+- Error budget is calculated live: `((SLO.ERROR_RATE_PCT - errorRatePct) / SLO.ERROR_RATE_PCT) * 100`. At 0% error rate, 100% budget remains. At 5% error rate, 0% budget remains — breach.
+
+**Why `state.waitUntil()` for metric writes:** The DO returns a Response the moment the LLM finishes. If we `await writeMetric()` before returning, we add D1 write latency (~5ms) to every response. `state.waitUntil()` tells the runtime "keep this isolate alive after the Response is sent, until this promise settles." The user gets their response immediately. The metric write happens in the background. Same pattern as the audit log — both are non-blocking.
+
+**Why separate from `audit_log`:** The audit log carries PII — `message_preview`, `role`, `user_id`. It's write-once, append-only, read by compliance/managers. The metrics table carries no PII — just latency, status, agent type, org. It's optimised for time-series aggregation: `ORDER BY latency_ms ASC` for percentiles, `GROUP BY agent_type` for breakdown. Two different jobs, two different tables. Same pattern as the rate limiter (KV) vs audit log (D1) split in Week 1.
+
+**The SQLite percentile problem:** SQLite has no native `PERCENTILE_CONT()` function. The first implementation used a nested subquery with `COUNT(*)` inside — which refers to the subquery's own row count, not the outer query's. This caused a 500 on first run. The fix: fetch sorted latencies into the runtime and slice at the target rank in TypeScript. `latencies[Math.floor(latencies.length * 0.95)]`. Simple, correct for small windows, and avoids another D1 round trip. The weakness: at 100k+ rows, fetching all latencies into memory is expensive. At that scale, you'd pre-aggregate into hourly buckets or use a real time-series store.
+
+**The `isManager` scoping pattern:** `/api/v1/health` follows the exact same pattern as `/api/v1/audit`. `orgId` comes from the JWT, never from the request. `isManager` determines whether we pass `orgId` as the filter or `null` (all orgs). The filter is applied inside `getOrgHealth()` — the route handler never constructs a SQL query directly. Same defense-in-depth principle as the KB namespace filter in Week 1.
+
+**VERIFY results (confirmed live):**
+```json
+{
+  "requestCount": 1,
+  "p95LatencyMs": 6536,
+  "slos": {
+    "latency": { "targetMs": 8000, "p95Ms": 6536, "passing": true },
+    "errorRate": { "targetPct": 5, "actualPct": 0, "passing": true }
+  },
+  "errorBudgetRemainingPct": 100
+}
+```
+Both `/api/v1/health` (self-service, SE role, own org) and `/admin/health-scorecard` (bearer-protected, all orgs) return correct data. SLOs passing. Error budget at 100%.
+
+> **Prompt I used (COMPREHEND checkpoints — walk these cold, chat closed):**
+> 1. `src/observability/metrics.ts` — Why is `writeMetric()` a standalone function and not a method on the agent? Why does `getOrgHealth()` loop per-org instead of one big query? What does the SQLite percentile approximation actually do — and what's its weakness?
+> 2. `src/agents/base-agent.ts` — Why `state.waitUntil()` and not just `await`? Why does `handleChat` use `capturedChunks?.length` for `kbChunksUsed` but `handleStream` uses `toolCalls.filter()`? Is that a tradeoff or a gap?
+> 3. `src/index.ts` — `/api/v1/health` — Why does `isManager` determine the `orgFilter`? Trace exactly where `orgId` comes from. What happens if `request_metrics` is empty?
+> 4. `schema.sql` — Why is `request_metrics` separate from `audit_log`? What do the three indexes cover and why those specific columns?
+
+### How I'd explain it to a customer / exec (practice out loud)
+← YOUR WORDS: Say this out loud, then write what you actually said.
+
+Every time someone uses the system, we record two things silently in the background: how long the response took, and whether it succeeded. Those measurements feed a live scorecard that tells us — and you — whether the system is meeting its targets. We've set two targets: responses should complete in under 8 seconds at the 95th percentile, and fewer than 5% of requests should fail. The scorecard shows you your remaining "error budget" — basically, how close you are to the limit before we have a problem. Right now it's at 100% because nothing has failed. When it drops below 20%, that's the signal to stop shipping new features and fix stability instead. This is how Google runs their infrastructure, and it's how we've built SE Intel.
+
+### Tradeoff or open question
+← YOUR WORDS: What didn't fully make sense yet? What's the cost of this approach?
+
+The percentile calculation fetches all latency rows into memory and slices in TypeScript. That's fine at 1 request. At 10,000 requests in a 24-hour window, you're pulling 10,000 rows across the wire from D1 just to compute a p95. The SRE book covers this — the standard fix is pre-aggregation into time buckets (hourly rollups) so the query always touches a bounded number of rows regardless of traffic. We haven't built that yet. The open question: at what request volume does the naive approach break down, and should we add hourly rollups to the metrics table as a Cycle 2 target?
+
+---
+
+## Date: 2026-06-22
+## Resource: Chip Huyen — *AI Engineering* Ch.3-4 ("Evaluation and Monitoring") + STUDY.md — Chapter 8: The Evaluation Harness
+## Time Spent: 70 min
+## Topics: deterministic checks, LLM-as-judge, model-graded evals, faithfulness, regression testing, rubric scaling, self-grading bias
+## Connects to this week's target: Evals as a CI gate (Cycle 1 / Week 2)
+
+### Key Insight (one sentence)
+Deterministic checks catch facts that appear or don't appear; LLM judges catch quality that requires semantic understanding — and the biggest mistake in eval design is using a judge where a string check would suffice.
+
+### How it connects to what I'm building
+STUDY.md Chapter 8 describes the four scoring dimensions (groundedness, relevance, role-appropriateness, actionability) and the three-script pipeline (runner → judge → report). Chip Huyen Chapter 3 adds the taxonomy I needed: deterministic checks are for objective criteria, model-graded evals are for subjective criteria, and human review is for ground truth. Chapter 4 adds the pipeline concept: evals run on every prompt change, not just before release.
+
+**Where `faithfulness.py` sits in the taxonomy:** It is a deterministic check, not a model-graded eval. It does not call an LLM. It checks whether specific strings (the facts retrieved from the KB) appear in the response. If "WinterCG" was retrieved and "WinterCG" is not in the response, that's a grounding_fail — no model needed to judge that. This is exactly what Chip Huyen prescribes: "use deterministic checks when you can." The speed is milliseconds, the cost is zero, and it cannot be gaslit by the same LLM it's evaluating.
+
+**Where `judge.py` adds value:** The judge handles dimensions that require semantic interpretation. "Is this response appropriate for a sales manager?" requires understanding business context, role expectations, and tone. A string check can't evaluate that. The judge's 5th dimension (faithfulness) now sees the retrieved chunks, so it can penalize the model for ignoring a specific fact even when the response is otherwise coherent. But the judge is slower (one LLM call per case), costs tokens, and carries self-grading bias.
+
+**The self-grading bias problem:** The agent and the judge both use Llama 3.3 70B. The judge recognizes the agent's output style as natural and gives it higher scores than an independent evaluator would. Chip Huyen's fix: use a different model as judge (Claude via Anthropic API). I documented this as a known limitation in the harness README. For the portfolio, the bias is acceptable because the trend matters more than the absolute score — 67% → 73% → 87% is a real improvement regardless of the judge's optimism.
+
+**Rubric scaling:** The 15 hand-written rubrics in `cases/*.json` don't scale. Chip Huyen Chapter 4 describes the eval pyramid: deterministic checks at the bottom (infinite scale, zero cost), LLM-synthesized rubrics in the middle, human review at the top. The four patterns I documented in the build notes (rubric synthesis, gold set, active learning, behavioral contracts) all come from Chapter 4's framework. The "one rule that prevents eval debt" — every new feature ships with at least one eval case — is the operational discipline that makes the pyramid work.
+
+**The fth-003 bug as validation:** The deterministic gate caught a real flaky bug on first run. The model was handed the "WinterCG" chunk but cited it only ~50% of runs. A judge might have missed this — it would see a coherent response about lock-in and score it "good enough." The string check saw "WinterCG" was retrieved but absent, flagged a grounding_fail, and blocked the CI gate. That is the exact separation of concerns Chip Huyen describes: deterministic for facts, judge for nuance.
+
+**Interview question this answers:** "How do you measure LLM quality?" — Two layers. A deterministic check proves whether specific facts from the knowledge base appear in the response (grounding). An LLM-as-judge scores four semantic dimensions (relevance, role-appropriateness, actionability, faithfulness) on a rubric. The deterministic gate blocks deploy on factual errors; the judge provides a trend signal for quality over time. Score progression: 67% → 73% → 87% across three iterations, each driven by a prompt fix identified by the harness.
+
+> Prompt I used: Chip Huyen Ch.3 covers three eval types — deterministic checks, model-graded evals, human evaluation. Which one is `faithfulness.py` and which is `judge.py`? Then Ch.4 covers systematic pipelines: what is the "eval pyramid" and where does each of our components sit? Finally: what is self-grading bias, and why did the deterministic gate catch the fth-003 flaky bug when the judge might have missed it?
+
+### How I'd explain it to a customer / exec (practice out loud)
+Most AI demos look good until they don't — and by then you've already told a customer something wrong. The way we prevent that is with two testing layers that run before any change goes live. The first one is completely mechanical: we check whether the specific facts our retrieval system found actually made it into the response. If our knowledge base says the discount is 35% and the AI says 25%, that gets caught in milliseconds — no interpretation, no judgment, just a string that's either there or it isn't. The second layer uses another AI to score the response on quality: was it relevant, was it the right depth for the person asking, could a rep actually use it in a call? The first layer blocks bad deploys before they happen. The second layer tells us if quality is drifting over time. Together they answer the question you always get after a demo: "That looks great — but how do we know it keeps working?"
+
+### Tradeoff or open question
+The self-grading bias is the thing I'm still sitting with. We're using the same model to generate answers and to judge them — Llama 3.3 70B grading Llama 3.3 70B. The judge is going to be more forgiving of responses that sound like things it would say. The fix is obvious (use Claude or GPT-4o as the judge — a different model applies different standards), but it adds a real cost: every eval run would require an Anthropic API call instead of a free Workers AI call. At 15 cases that's negligible. At 500 it matters. The open question for me is: at what scale does self-grading bias actually show up as a problem in practice — do the 87% pass rates hold up when I swap in a stricter judge, or does the score drop and reveal that I've been measuring against a lenient baseline the whole time?
+
+---
+
 ## Date: 2026-06-18 (Day 5)
 ## Resource: STUDY.md — Chapter 5: The RAG System
 ## Time Spent: 60 min

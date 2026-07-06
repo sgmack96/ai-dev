@@ -25,6 +25,7 @@
 9. [The MCP Server](#chapter-9--the-mcp-server)
 10. [Failure Modes and Trade-offs](#chapter-10--failure-modes-and-trade-offs)
 11. [The Behavioral Story](#chapter-11--the-behavioral-story)
+12. [Observability, SLOs, and the Health Scorecard](#chapter-12--observability-slos-and-the-health-scorecard)
 
 ---
 
@@ -1595,6 +1596,207 @@ because the agent and judge use the same model — Claude as judge is the planne
 old conversation turns instead of deleting them. I also built an MCP server that exposes
 these agents as tools for Claude Desktop — it's protocol-verified but not yet connected."
 
+# Chapter 12 — Observability, SLOs, and the Health Scorecard
+
+## The Concept
+
+Before this chapter, the system had three agents, RAG, memory, and an audit trail — but
+no way to answer the most basic production question: **"is it healthy right now?"**
+Observability closes that gap with three pieces:
+
+1. **A metric written on every request** — latency, org, agent type, success/failure.
+2. **A health calculator** that turns raw metrics into p50/p95 latency, error rate, and
+   a pass/fail against a documented target (an SLO).
+3. **A deterministic probe** that proves the whole pipeline works without involving an LLM.
+
+The chapter's real lesson isn't the plumbing — it's what happened when the plumbing met
+real traffic: the original target was wrong, and the honest move was to recalibrate it
+in public rather than quietly ignore a permanently red dashboard.
+
+## What We Built
+
+### The metrics table — separate from the audit log on purpose
+
+```sql
+-- Audit log: carries PII, governed retention, one row per conversation turn
+CREATE TABLE IF NOT EXISTS audit_log (
+  id, timestamp, user_id, org_id, agent_type,
+  message_preview, role, thread_id, ...
+);
+
+-- Metrics: no PII, higher write frequency, optimised for aggregation
+CREATE TABLE IF NOT EXISTS request_metrics (
+  id, timestamp, org_id, user_id, agent_type,
+  latency_ms, kb_chunks_used, tools_called, status, error_type
+);
+CREATE INDEX idx_metrics_org_time   ON request_metrics(org_id, timestamp DESC);
+CREATE INDEX idx_metrics_agent_time ON request_metrics(agent_type, timestamp DESC);
+CREATE INDEX idx_metrics_status     ON request_metrics(status, timestamp DESC);
+```
+`📄 schema.sql:12, 38`
+
+The split matters for the same reason Chapter 6 splits short-term/long-term memory: two
+different access patterns and two different governance requirements should never share
+one table just because they're both "logging."
+
+### Writing a metric without slowing the response down
+
+```javascript
+// base-agent.ts — after the response is built, but before it's the *last* thing done
+this.state.waitUntil(
+  writeMetric({
+    orgId, userId, agentType, latencyMs,
+    kbChunksUsed, toolsCalled, status,
+  }, env).catch(err => console.error("[metrics] write error:", err))
+);
+```
+`📄 src/agents/base-agent.ts:196-197, 403-404`
+
+Same `waitUntil()` pattern as Chapter 6's LTM extraction and the Week 1 audit write:
+the metric write happens *after* the client already has its response, and errors are
+swallowed — a metrics failure must never become a user-facing failure.
+
+### The health calculator — `getOrgHealth()`
+
+Four SQL statements, not three — one to discover which orgs have data in the window,
+then three per org:
+
+```javascript
+export async function getOrgHealth(orgId, windowHours, env) {
+  // 0. Which orgs have activity in this window? (admin view = null orgId)
+  const orgs = await env.DB.prepare(
+    `SELECT DISTINCT org_id FROM request_metrics WHERE timestamp >= ?`
+  ).all();
+
+  for (const org of orgs) {
+    // 1. Counts — total / success / error
+    const agg = await env.DB.prepare(`
+      SELECT COUNT(*) AS total,
+             SUM(CASE WHEN status='success' THEN 1 ELSE 0 END) AS successes,
+             SUM(CASE WHEN status='error'   THEN 1 ELSE 0 END) AS errors
+      FROM request_metrics WHERE org_id = ? AND timestamp >= ?
+    `).first();
+
+    // 2. Percentiles — SQLite has no percentile function, so fetch sorted
+    //    latencies and index into the array in JS. Correct and simple
+    //    below ~10k rows/window; would need Workers Analytics Engine above that.
+    const latencies = (await env.DB.prepare(`
+      SELECT latency_ms FROM request_metrics
+      WHERE org_id = ? AND timestamp >= ? ORDER BY latency_ms ASC
+    `).all()).results.map(r => r.latency_ms);
+    const p95 = latencies[Math.floor(latencies.length * 0.95)] ?? 0;
+
+    // 3. Agent breakdown — which agents this org is actually using
+    const agentBreakdown = await env.DB.prepare(`
+      SELECT agent_type, COUNT(*) as cnt FROM request_metrics
+      WHERE org_id = ? AND timestamp >= ? GROUP BY agent_type ORDER BY cnt DESC
+    `).all();
+
+    // SLO evaluation happens here, in application code, not in SQL
+    const passing = p95 <= SLO.P95_LATENCY_MS;
+  }
+}
+```
+`📄 src/observability/metrics.ts:94-188`
+
+The `?? 0` fallback on the p95 line is doing more work than it looks like — see the
+probe design below.
+
+### SLO calibration — the target was a guess, then it wasn't
+
+```javascript
+// Calibrated 2026-07-01 against real production data (10 requests, 2 orgs):
+//   cloudflare org: p50=10725ms, p95=13118ms
+//   portfolio-org:  p50=6536ms,  p95=11737ms
+//
+// 8000ms was the initial aspirational target. It was wrong for a 70B model
+// with RAG (embedding query + vector search + 70B generation in one path).
+export const SLO = {
+  P95_LATENCY_MS: 15000,   // was 8000ms — recalibrated against measured p95
+  ERROR_RATE_PCT: 5,
+  WINDOW_HOURS: 24,
+} as const;
+```
+`📄 src/observability/metrics.ts:20-37`
+
+Improvement roadmap, now trackable against this baseline: cache common KB answers,
+reduce `max_tokens`, or route simple queries to a smaller model (Llama 8B instead of 70B).
+
+### The probe — four checks, in a dependency order
+
+```bash
+# tests/health-probe.sh
+Check 1: http-200            — is the endpoint even reachable?
+Check 2: orgs-have-data      — is the metrics pipeline actually writing rows?
+Check 3: error-rate-slo      — is every org's error rate within 5%?
+Check 4: p95-calculated      — is the p95 non-zero (percentile math didn't silently return 0)?
+```
+`📄 evaluation-harness/tests/health-probe.sh:1-24`
+
+These are not four independent checks — they're a dependency chain. If check 1 fails,
+nothing else means anything. If check 2 fails (no data), checks 3 and 4 would trivially
+"pass" against an empty or all-zero dataset and report a scorecard that looks perfect
+while actually being broken. Check 4 exists specifically because of the `?? 0` fallback
+above: if the percentile calculation ever breaks, it fails silently into `p95: 0`, which
+*looks* like flawless latency instead of a bug.
+
+## Why We Built It This Way
+
+**Why D1 for metrics instead of Workers Analytics Engine?**
+Analytics Engine is the "correct" tool for high-cardinality time series at scale, but it's
+a separate binding with its own query language and doesn't work in local dev without
+mocking. D1 was already the audit-log backend — one binding, standard SQL, works with
+`wrangler dev`. The known ceiling: sort-and-slice p95 in JS is O(n log n); fine under
+~10k rows/window, the trigger to migrate to Analytics Engine is when it isn't.
+
+**Why recalibrate the SLO instead of leaving it at 8000ms?**
+A permanently failing SLO trains people to ignore the dashboard — the same "cry wolf"
+failure mode as an alert that's always firing. The honest move was to deploy, measure
+real traffic, and set the target where the architecture actually performs, with the
+gap (8s guess → 13s measured → 15s target) written down instead of hidden.
+
+**Why is the health probe deterministic (no LLM)?**
+Same lesson as Chapters 2 and 8: an LLM is not a reliable test oracle. A probe that
+calls `/admin/health-scorecard` and asserts on numbers can't be masked by a hallucination
+the way an LLM-graded eval could be.
+
+---
+
+### Interview Questions — Chapter 12
+
+**Q: How do you track the health of an AI system in production?**
+A: Every agent request writes a metric row — org, agent type, latency, status — via
+`state.waitUntil()` so it never adds latency to the response. A health endpoint aggregates
+that into p50/p95 latency and error rate per org, evaluates it against a documented SLO,
+and reports an error budget remaining. There's a self-service view for the org and an
+admin view across all orgs.
+
+**Q: Walk me through how p95 latency is actually calculated.**
+A: SQLite has no native percentile function, so the query fetches every latency in the
+window sorted ascending, and the application code indexes into that array at
+`length * 0.95`. It's correct and simple below roughly 10,000 rows per window; past that,
+sorting in JS becomes the bottleneck and it's time to move to Workers Analytics Engine.
+
+**Q: Your p95 SLO changed from 8 seconds to 15. Isn't that just moving the goalposts?**
+A: No — it's the difference between an aspirational number and a measured one. We deployed
+with an 8-second guess, then measured real 70B-model-with-RAG traffic at 11-13 seconds
+p95. Leaving the target at 8 seconds would mean the dashboard is permanently red, which
+teaches people to ignore it. We recalibrated to 15 seconds with the before/after numbers
+documented, plus a concrete improvement roadmap: cache common KB answers, cut `max_tokens`,
+or route simple queries to an 8B model instead of the 70B.
+
+**Q: Your health probe has four checks. Why those four, and does the order matter?**
+A: They're a dependency chain, not four independent tests. Reachability (check 1) has to
+pass before data-presence (check 2) means anything; and data-presence has to pass before
+the error-rate and p95 checks (3 and 4) are meaningful — otherwise they'd trivially "pass"
+against an empty dataset. Check 4 specifically exists because the p95 calculation has a
+`?? 0` fallback: if that ever fires unintentionally, the scorecard would report a p95 of 0,
+which looks like perfect performance instead of a broken calculation. It's the same
+principle as Chapter 2's isolation probes — never trust a metric that can silently default
+to a value that looks healthy.
+
+---
+
 ## Mapping Chapters to Anthropic Screening Questions
 
 **"Have you personally built and deployed a production LLM-powered application?"**
@@ -1617,6 +1819,11 @@ Uses httpx, dotenv, argparse. Calls the Workers AI REST API directly.
 **"Do you have experience working with startup engineering teams?"**
 → Chapter 11 (your current SE role). You build and demo prototypes for startups daily.
 SE Intel is the AI specialization on top of that experience.
+
+**"How do you track adoption and health of a system you've shipped?"**
+→ Chapter 12. Structured metrics on every request, an SLO recalibrated against real
+production data with the before/after numbers documented, and a deterministic probe
+that proves the pipeline without an LLM in the loop.
 
 ## The "What I'd Change" Answers
 
@@ -1647,7 +1854,8 @@ These show self-awareness. Interviewers love when you can critique your own work
 | Day 9 | Chapter 9 — MCP | 20 min | Protocol, stdio, thin bridge pattern |
 | Day 10 | Chapter 10 — Failure Modes | 30 min | Component failure map, trade-offs table |
 | Day 11 | Chapter 11 — Behavioral | 20 min | 60s pitch, 5min deep dive, screening answers |
-| Day 12+ | Review | 20 min | Re-read interview questions, practice answers aloud |
+| Day 12 | Chapter 12 — Observability | 30 min | Metrics vs audit log, SLO calibration, probe dependency chain |
+| Day 13+ | Review | 20 min | Re-read interview questions, practice answers aloud |
 
 ---
 
