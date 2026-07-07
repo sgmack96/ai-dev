@@ -121,6 +121,12 @@ export abstract class BaseAgent implements DurableObject {
 
     // Call Workers AI
     let responseText: string;
+    // Tracks the real outcome for observability — previously this was hardcoded
+    // to "success" below regardless of whether this try block failed, which
+    // meant the /admin/health-scorecard error-rate SLO could never detect a
+    // Workers AI failure. See CYCLE-1-WEEK-4 notes.
+    let requestStatus: "success" | "error" = "success";
+    let errorType: string | undefined;
     try {
       const aiResponse = await this.env.AI.run(MODEL, {
         messages,
@@ -144,6 +150,8 @@ export abstract class BaseAgent implements DurableObject {
     } catch (err) {
       console.error("[agent] Workers AI error:", err);
       responseText = "I encountered an error processing your request. Please try again.";
+      requestStatus = "error";
+      errorType = "workers_ai_error";
     }
 
     const latencyMs = Date.now() - start;
@@ -201,7 +209,8 @@ export abstract class BaseAgent implements DurableObject {
         latencyMs,
         kbChunksUsed: capturedChunks?.length ?? toolCalls.filter((t) => t.toolName === "kb_search").length,
         toolsCalled: toolCalls.map((t) => t.toolName),
-        status: "success",
+        status: requestStatus,
+        ...(errorType ? { errorType } : {}),
       }, this.env).catch((err) => console.error("[metrics] D1 write error:", err))
     );
 
@@ -360,6 +369,43 @@ export abstract class BaseAgent implements DurableObject {
         console.error("[stream] Workers AI error:", err);
         await sse({ type: "error", message: "Generation failed. Please retry." });
         await writer.close();
+
+        // Previously this returned here with NO audit event and NO metric
+        // written at all — a streaming failure was completely invisible to
+        // both the audit log and the health scorecard, not just mislabeled.
+        // Record the attempt the same way the success path does, below.
+        const failLatencyMs = Date.now() - start;
+
+        this.state.waitUntil(
+          this.writeAuditEvent({
+            id: crypto.randomUUID(),
+            timestamp: start,
+            userId: userContext.userId,
+            role: userContext.role,
+            orgId: userContext.orgId,
+            agentType: this.agentType,
+            threadId,
+            messagePreview: message.slice(0, 100),
+            toolsUsed: toolCalls.map((t) => t.toolName),
+            responseLatencyMs: failLatencyMs,
+            model: MODEL,
+            blocked: false,
+          }).catch(() => {})
+        );
+
+        this.state.waitUntil(
+          writeMetric({
+            orgId: userContext.orgId,
+            userId: userContext.userId,
+            agentType: this.agentType,
+            latencyMs: failLatencyMs,
+            kbChunksUsed: toolCalls.filter((t) => t.toolName === "kb_search").length,
+            toolsCalled: toolCalls.map((t) => t.toolName),
+            status: "error",
+            errorType: "workers_ai_stream_error",
+          }, this.env).catch(() => {})
+        );
+
         return;
       }
 
