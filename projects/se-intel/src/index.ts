@@ -27,8 +27,18 @@ import { checkRateLimit } from "./auth/ratelimit.js";
 import { getUIHtml } from "./ui.js";
 import { LongTermMemory } from "./memory/long-term.js";
 import { kbSearchRaw } from "./tools/kb-search.js";
-import { getOrgHealth, SLO } from "./observability/metrics.js";
-import type { Env, Role } from "./types/index.js";
+import { getOrgHealth, SLO, writeMetric } from "./observability/metrics.js";
+import type { AgentType, Env, Role } from "./types/index.js";
+
+// Maps a request path to the agent it targets, for rate-limit metric
+// attribution. Returns null for non-agent routes (health, audit, history) —
+// request_metrics is scoped to agent invocations, so those are skipped.
+function agentTypeFromPath(path: string): AgentType | null {
+  if (path.startsWith("/api/v1/account")) return "account";
+  if (path.startsWith("/api/v1/enablement")) return "enablement";
+  if (path.startsWith("/api/v1/transcript")) return "transcript";
+  return null;
+}
 
 // Re-export DO classes so wrangler can find them
 export { AccountIntelAgent } from "./agents/account-intel.js";
@@ -40,27 +50,21 @@ import { seedVectorize } from "../scripts/seed-kb.js";
 
 const app = new Hono<{ Bindings: Env }>();
 
-// ── Cloudflare Access JWT guard ───────────────────────────────────────────────
-// Rejects requests that don't come through Access (no JWT header).
-// This closes the backdoor at the raw workers.dev URL.
-app.use("*", async (c, next) => {
-  const path = new URL(c.req.url).pathname;
-
-  // Allow health check and Cloudflare internals without Access JWT
-  if (path === "/health" || path.startsWith("/cdn-cgi/")) {
-    return next();
-  }
-
-  const jwt = c.req.header("CF-Access-Jwt-Assertion");
-  if (!jwt) {
-    return c.json(
-      { error: "Unauthorized — access via se-intel.macksportreport.com" },
-      401
-    );
-  }
-
-  return next();
-});
+// NOTE: A global `app.use("*", ...)` guard requiring a CF-Access-Jwt-Assertion
+// header on every route was added here during Week 3 and removed on 2026-07-06.
+// It was intended to protect the new observability admin routes, but it was
+// scoped to the whole app (only /health and /cdn-cgi/* were exempted), which
+// meant it also blocked the public chat UI ("/"), /dev/token, and every
+// /api/v1/* route for any visitor not coming through a live Cloudflare Access
+// session — i.e. the entire portfolio demo on the workers.dev URL, for 5 days,
+// undetected because health-probe.sh and isolation-test.sh both send a dummy
+// `CF-Access-Jwt-Assertion: probe` header to route around this exact guard, so
+// neither test ever exercised the real-visitor path. It was also redundant:
+// every /admin/* route already has its own independent `Bearer ${JWT_SECRET}`
+// check (see below), and every /api/* route already has its own auth via
+// extractUserContext() (Access header in real production, or a portfolio dev
+// token). Removing the blanket guard restores the public demo without
+// reducing security anywhere, since nothing was actually relying on it.
 
 // ── Chat UI ───────────────────────────────────────────────────────────────────
 app.get("/", (c) => {
@@ -133,6 +137,8 @@ app.post("/dev/token", async (c) => {
 
 // ── Auth + rate limit middleware for all API routes ───────────────────────────
 app.use("/api/*", async (c, next) => {
+  const middlewareStart = Date.now();
+
   // 1. Extract and verify user identity
   const userContext = await extractUserContext(c.req.raw, c.env);
   if (!userContext) {
@@ -151,6 +157,25 @@ app.use("/api/*", async (c, next) => {
   // 2. Rate limit check
   const rl = await checkRateLimit(userContext.userId, userContext.role, c.env);
   if (!rl.allowed) {
+    // Rate-limited requests never reach a Durable Object, so without this
+    // they were completely invisible to request_metrics — the health
+    // scorecard undercounts total traffic under load. Only recorded for
+    // agent routes; request_metrics is scoped to agent invocations.
+    const agentType = agentTypeFromPath(c.req.path);
+    if (agentType) {
+      c.executionCtx.waitUntil(
+        writeMetric({
+          orgId: userContext.orgId,
+          userId: userContext.userId,
+          agentType,
+          latencyMs: Date.now() - middlewareStart,
+          kbChunksUsed: 0,
+          toolsCalled: [],
+          status: "rate_limited",
+        }, c.env).catch((err) => console.error("[metrics] rate-limit write error:", err))
+      );
+    }
+
     return c.json(
       {
         error: "Rate limit exceeded",
