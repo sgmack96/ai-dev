@@ -6,6 +6,78 @@
 
 ---
 
+## Date: 2026-07-07
+## Resource: STUDY.md — Chapter 10 (Failure Modes) + Chapter 12 (Observability), applied to two live bugs found today
+## Time Spent: 90 min
+## Topics: silent metric defaults, test-bypass headers as a smell, blast-radius of global middleware, graceful degradation vs invisible degradation
+## Connects to this week's target: prep work ahead of Cycle 1 / Week 4 (Failure under load) — both findings directly informed Week 4 scope
+
+### Key Insight (one sentence)
+A workaround added to a test so it keeps passing after a new check is introduced is not a neutral fix — it's the exact boundary where the test stopped covering reality, and both bugs found today were sitting just past that boundary.
+
+### How it connects to what I'm building
+Went looking for one small thing (thread real success/error status into `writeMetric()`,
+since it was hardcoded to `"success"` regardless of outcome) and found two bugs, not one,
+because fixing the first required actually exercising the auth path, which surfaced the second.
+
+**Bug 1** — `writeMetric()`'s hardcoded `"success"` meant the Week 3 error-rate SLO could
+never register a failure. Worse on the streaming path: the catch block returned before
+reaching *any* audit or metric write, so a failure there was invisible twice over, not
+just mislabeled once. Fixed by threading a real `requestStatus` variable through both
+call sites, and by moving the audit+metric write into the streaming catch block itself
+instead of only the happy path. Also added a `rate_limited` write in `index.ts`'s
+rate-limit middleware, using `c.executionCtx.waitUntil()` — the Hono/Workers equivalent
+of `state.waitUntil()` for code that isn't running inside a Durable Object.
+
+**Bug 2** — while live-testing Bug 1's fix with a plain Bearer token (no Access header),
+every request came back `401 Unauthorized`. Traced it to a global `app.use("*", ...)`
+guard added during Week 3 that required a `CF-Access-Jwt-Assertion` header on every
+route except `/health`. It had been live since the Week 3 deploy on 07-01 — meaning the
+public chat UI, `/dev/token`, and every `/api/v1/*` route had been returning bare 401s
+to any real visitor for 5 days, undetected, because both `health-probe.sh` and
+`isolation-test.sh` already carry a dummy `CF-Access-Jwt-Assertion: probe` header
+specifically to get past this guard on `/admin/*` routes. Neither test could have
+caught this even in principle — they don't exercise the code path the guard broke.
+
+**The pattern repeats across three separate bugs in four days now:** the 07-06
+`isolation-test.sh` drift (a script needed a bypass header after an auth change),
+and now this — same shape, bigger blast radius (broke the actual product, not just a
+test). Chapter 10's "graceful degradation by design" table assumes failures are visible
+enough to reason about. All three of these bugs were failures of *visibility*, not of
+the underlying resilience logic — the fallback/reject paths were mostly fine once you
+could actually see they were firing.
+
+### How I'd explain it to a customer / exec (practice out loud)
+We found two bugs today while doing routine prep work, and I want to walk through both
+because the way we found them is more important than the bugs themselves. First: our own
+health dashboard could never have shown a failure, even a real one — a piece of code
+that was supposed to record "this request failed" was hardcoded to record "success"
+instead, on every single request. Second, and more serious: a security check we added
+last week was scoped too broadly and had been silently blocking real visitors from our
+public demo for five days — nobody noticed because our own automated tests had a
+workaround built in for that exact check, so the tests kept passing green the whole
+time. Both are fixed and verified live now. The reason I'm walking through this in
+detail rather than just saying "it's fixed" is that the root cause is the same in both
+cases: a test or a metric that's been quietly adjusted to keep working around a change,
+instead of the change being questioned. That's a pattern worth watching for in any
+system, and it's exactly the kind of thing a good monitoring and testing discipline is
+supposed to surface — the fact that it took a manual walkthrough to find these instead
+of an automated alert is itself the next thing to fix.
+
+### Tradeoff or open question
+The rate-limiter test I ran today (firing 25 concurrent requests) surfaced a third,
+separate finding I did *not* fix: the KV-based sliding-window counter lost most of its
+increments under true concurrency — 25 near-simultaneous requests only left the counter
+at 10, not capped-and-rejected around 20. This is the same "eventually consistent KV"
+limitation Chapter 10 already names as a known weakness, but empirically it's worse
+than "slightly over-permissive" under a real burst — it's a lost-update race, not a
+rounding error. Deliberately did **not** fix this today; it's squarely Week 4 scope
+("DO contention handling"), and Chapter 10 already names the correct fix (a
+Durable-Object-based counter for exact enforcement) — that's a real build decision
+(DIRECT block) for 07-14, not a quick patch.
+
+---
+
 ## Date: 2026-07-06
 ## Resource: Google SRE Book — "Embracing Risk" / error budgets (https://sre.google/sre-book/embracing-risk/) + STUDY.md — Chapter 12: Observability, SLOs, and the Health Scorecard
 ## Time Spent: 45 min

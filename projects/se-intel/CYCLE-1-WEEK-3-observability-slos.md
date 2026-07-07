@@ -151,3 +151,69 @@ ALL HEALTH CHECKS PASSED — observability system verified
 - [x] Deployed — version `97e0b8a4`, both orgs `status: healthy`
 
 *Week 4 next: Failure under load — fallback injection, DO contention handling.*
+
+---
+
+## Post-script (2026-07-07): two bugs this week's work introduced, found and fixed
+
+Closing this week's ritual on 07-06 didn't catch either of these — both surfaced the
+next day while doing prep work for Week 4. Documenting both here since they're
+directly caused by this week's changes, not new Week 4 scope.
+
+### Bug 1 — the error-rate SLO could never detect a failure
+
+`writeMetric()` was called with `status: "success"` hardcoded at both call sites
+(`base-agent.ts` chat and stream paths) — there was no code path anywhere that ever
+wrote `status: "error"` or `status: "rate_limited"`, despite the type and schema
+supporting both. Worse on the streaming path: a Workers AI failure there returned
+early with **no** audit event and **no** metric row at all — completely invisible,
+not just mislabeled. Rate-limited (429) requests never reach a Durable Object, so
+they were invisible to `request_metrics` too.
+
+**Net effect:** the `error-rate-slo` check in `health-probe.sh` was structurally
+guaranteed to always pass, regardless of real error rate — the exact same "metric
+that can silently defaults to healthy" pattern as the p95 `?? 0` fallback documented
+in STUDY.md Chapter 12, except this wasn't an edge case, it was the only path.
+
+**Fix:** threaded real success/error outcomes through both `writeMetric()` call
+sites in `base-agent.ts`; added the missing audit+metric write to the streaming
+error path; added a `rate_limited` metric write in `index.ts`'s rate-limit
+middleware (fired via `c.executionCtx.waitUntil()` since it's outside a DO).
+Verified live: pre-seeded a KV rate-limit counter over the limit, confirmed a real
+429, confirmed the `rate_limited` row landed in `request_metrics` with `latency_ms: 35`
+(fast, as expected — rejected before ever reaching the DO/LLM).
+
+### Bug 2 — the Access JWT guard took the entire public demo down for 5 days
+
+While testing Bug 1's fix, discovered the global `app.use("*", ...)` Cloudflare
+Access guard added this week (to protect the new observability admin routes) was
+scoped to the *entire app*, exempting only `/health` and `/cdn-cgi/*`. That meant
+the chat UI (`/`), `/dev/token`, and every `/api/v1/*` route — the entire portfolio
+demo on `se-intel-portfolio.stephenmack96.workers.dev` — returned a bare 401 to any
+visitor not already carrying a `CF-Access-Jwt-Assertion` header, from the moment
+this deployed (2026-07-01) until fixed (2026-07-07). Anyone who clicked the "Live"
+link on the portfolio project page during that window got a JSON error instead of
+the demo.
+
+**Why nothing caught it for 5 days:** both `health-probe.sh` and `isolation-test.sh`
+send a dummy `CF-Access-Jwt-Assertion: probe` header specifically to route around
+this exact guard when hitting `/admin/*` routes — so neither automated check ever
+exercised the real-visitor path this guard broke. The regression tests were, by
+construction, blind to the regression.
+
+**Also turned out to be pure redundancy, not just misconfigured:** every `/admin/*`
+route already had its own independent `Bearer ${JWT_SECRET}` check, and every
+`/api/*` route already had its own auth via `extractUserContext()`. The global
+guard added zero net security while breaking the two things that were already
+working correctly.
+
+**Fix:** removed the global guard entirely. Verified: chat UI loads (200), `/dev/token`
+works with no special headers (200), a full agent chat round-trip succeeds for a
+plain Bearer-token visitor with zero Access headers, and both `health-probe.sh`
+(4/4) and `isolation-test.sh` (3/3) still pass — confirming the admin routes'
+independent auth was never actually dependent on the guard that got removed.
+
+**The lesson (same one as the isolation-test.sh drift from 07-06, one level up):**
+a workaround header added to a test to route around a new auth check is a signal
+worth questioning, not just accepting — if the test needs a bypass to keep passing,
+that bypass is exactly where the test stopped covering reality.

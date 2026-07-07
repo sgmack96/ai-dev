@@ -7,21 +7,36 @@
 
 ---
 
-## ☀️ TODAY — 2026-07-06 (Monday)
+## ☀️ TODAY — 2026-07-07 (Tuesday)
 
 ```
-TRACK:   AI-dev close-out, then RFP/curriculum for the rest of the week
-STATUS:  Week 3 is now FULLY CLOSED:
-           ✓ Sanity probes re-verified (4/4 health, 3/3 isolation)
-           ✓ COMPREHEND done (5 questions — see Progress Log below for grading notes)
-           ✓ STUDY.md Chapter 12 (Observability) written
-           ✓ THEORY-LOG.md entry logged (SLO calibration + a test-drift finding)
-           ✓ NARRATE published — project page updated with Cycle 1 Weeks 1-3 summary
-           ✓ All outstanding code/docs committed (4 commits: Week 2, Week 3,
-             isolation-test.sh drift fix, this doc set)
+TRACK:   AI-dev — one small standalone patch (not a full Week 4 start),
+         then RFP/curriculum for the rest of the week as scheduled.
+STATUS:  Week 3 close-out (07-06) is done. Today's patch found TWO live bugs,
+         both fixed and verified against the deployed worker:
+           ✓ writeMetric() status hardcoded to "success" — error-rate SLO
+             could never detect a failure. Fixed on both chat + stream paths,
+             plus added a missing rate_limited write in index.ts's rate-limit
+             middleware. Verified live: forced a 429, confirmed the
+             rate_limited row landed in request_metrics.
+           ✓ EMERGENCY: a global Access-JWT guard added in Week 3 had been
+             returning bare 401s to every real visitor (chat UI, /dev/token,
+             all /api/v1/*) since the 07-01 deploy — 5 days undetected because
+             both regression probes carry a workaround header that routed
+             around this exact check. Removed the guard (it was also pure
+             redundancy — /admin/* and /api/* both already have independent
+             auth). Verified live: chat UI loads, full agent round-trip
+             succeeds with zero special headers, both probes still 4/4 + 3/3.
+           ✓ Found but deliberately NOT fixed: the KV rate-limiter loses most
+             of its count under true concurrency (25 near-simultaneous
+             requests left the counter at 10, not ~20) — this is real Week 4
+             material (DO contention handling), logged for 07-14, not patched
+             today.
+         See CYCLE-1-WEEK-3-observability-slos.md postscript + THEORY-LOG.md
+         2026-07-07 entry for full detail.
 
-TODAY:   Week 3 close-out is done. Per the scheduling model below, the rest of
-         this week is RFP/curriculum. Options:
+TODAY:   Patch is done and deployed. Rest of this week is RFP/curriculum per
+         the schedule. Options:
            (A) RFP 002 lab — Enterprise Tech RFP exists at
                rfp-lab/001-zero-trust-sase/RFP-002-ENTERPRISE-TECH.md
            (B) Zero Trust demo practice — run DEMO-SCRIPT.md cold 3x
@@ -29,7 +44,8 @@ TODAY:   Week 3 close-out is done. Per the scheduling model below, the rest of
            (C) Curriculum gap — any phase you haven't studied recently
 
 NEXT AI-DEV WEEK (2026-07-14): Cycle 1 / Week 4 — Failure under load
-         (fallback injection, DO contention handling).
+         (fallback injection via a debug-toggle mechanism, DO contention
+         handling — including the KV rate-limiter race found today).
 ```
 
 > **▶ Sanity re-check on reopen:**
@@ -160,3 +176,4 @@ The Applied AI Architect signature. (Unlock after Cycle 2 ships.)
 - 2026-06-26 — Week 2 COMPLETE ✅ THEORY (Chip Huyen Ch.3-4 + STUDY ch.8) logged in THEORY-LOG.md. NARRATE: Blog #2 published ("How I Built a CI Gate for My AI Agent"). Definition of Done: all 7 criteria met. Week 3 begins: Observability + SLOs + Account-Health Scorecard.
 - 2026-07-01 — Week 3 COMPLETE ✅ Observability + SLOs shipped. Key finding: initial 8000ms p95 SLO was wrong for 70B — real production data showed 11-13s. Recalibrated to 15000ms with documented rationale. `health-probe.sh` 4/4 passing (deterministic, no LLM). `/admin/health-scorecard` live — both orgs `status: healthy`. Deployed version `97e0b8a4`. Week 4 next: Failure under load — fallback injection, DO contention.
 - 2026-07-06 — Week 3 CLOSED ✅ Full close-out ritual completed (build was done 07-01, close-out had been sitting open). Sanity probes re-run first: health-probe 4/4 passed clean; isolation-test.sh failed 3/3 (`isolationOk: null`) — real finding, not a regression: the global Access JWT guard added in the Week 3 code didn't get the same treatment in the older Week 1 script (health-probe.sh already had the workaround header, isolation-test.sh didn't). Fixed, re-verified 3/3. COMPREHEND: answered all 5 cold — 2/5 solid as-is (waitUntil rationale, audit_log vs request_metrics split), 3/5 right in shape but light on specifics (SLO numbers, the JS-percentile-not-SQL detail, the probe dependency-chain reasoning) — closed the gaps in STUDY.md ch.12 rather than re-quizzing. STUDY.md Chapter 12 written (Concept/What We Built/Why/Interview Qs, same house style as ch.1-11). THEORY-LOG entry logged: SLO-as-error-budget-precondition insight + the isolation-test.sh drift as its own "test rot" lesson. NARRATE: portfolio project page updated with a Cycle 1 (Weeks 1-3) summary section linking both live blog posts — lighter lift than a full blog, as scoped. Also cleared 3 weeks of uncommitted work into 4 scoped commits (Week 2 evals-CI-gate, Week 3 observability/SLOs, the isolation-test.sh fix, this doc set) — flagged one undocumented bundled change (AI Gateway per-call routing metadata across several files) in the commit body rather than silently attributing it to either week. Week 4 (Failure under load) deferred to the 2026-07-14 AI-dev week per the schedule; rest of this week is RFP/curriculum.
+- 2026-07-07 — Small standalone patch (not Week 4 proper) ✅ Set out to fix one thing (writeMetric() hardcoded to "success") and found two live bugs. (1) Threaded real success/error status through both writeMetric() call sites in base-agent.ts; fixed the streaming path, which previously wrote NO audit event and NO metric at all on failure (worse than mislabeled — invisible); added a rate_limited write in index.ts's rate-limit middleware via c.executionCtx.waitUntil(). Verified live against D1: forced a real 429 by pre-seeding the KV counter, confirmed the rate_limited row landed with latency_ms:35. (2) While testing with a plain Bearer token, found the entire public demo (chat UI, /dev/token, all /api/v1/*) had been returning bare 401s to any real visitor since the Week 3 deploy on 07-01 — a global Access-JWT guard was scoped to the whole app instead of just the new admin routes, and neither health-probe.sh nor isolation-test.sh could ever have caught it because both carry a workaround header specifically built to route around that exact check. Also turned out to be pure redundancy (admin routes and /api/* both already have independent auth). Removed the guard, verified live: chat UI 200, full agent round-trip succeeds with zero special headers, both probes still 4/4 + 3/3. Deliberately did NOT fix a third finding (KV rate-limiter loses most of its count under true concurrency — 25 near-simultaneous requests left the counter at 10) — that's real Week 4 material, logged for 07-14. Documented all three in CYCLE-1-WEEK-3's postscript + a THEORY-LOG entry on the repeating "test workaround = blind spot" pattern (3rd instance in 4 days: isolation-test.sh drift → this auth outage → the rate-limiter race, all same root shape). Two commits, deployed twice, both live and verified.
