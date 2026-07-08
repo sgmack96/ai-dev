@@ -6,6 +6,30 @@
 
 ---
 
+## Date: 2026-07-08
+## Resource: Cloudflare AI Gateway docs — [Rate Limiting](https://developers.cloudflare.com/ai-gateway/features/rate-limiting/) + [Data Loss Prevention](https://developers.cloudflare.com/ai-gateway/features/dlp/)
+## Time Spent: 45 min
+## Topics: AI Gateway governance, per-gateway vs. per-request policy scope, DLP/streaming interaction, multi-tenant policy variance
+## Connects to this week's target: rfp-lab Pillar 4 (AI) — GTW-04 and GTW-05 gaps found while building the response matrix
+
+### Key Insight (one sentence)
+A platform capability that reads as a checkbox on a requirements list ("supports DLP") can be a real architecture fork once you read the actual mechanics — DLP on AI Gateway is scoped per-gateway, not per-request, which is a direct conflict with any system (like `se-intel`) that intentionally routes multiple tenants through one shared gateway.
+
+### How it connects to what I'm building
+Pillar 4's response matrix rated GTW-05 (PII/content-safety controls) as Non-Compliant because `se-intel-gateway` has `dlp.enabled: true` but zero policies configured, and the API token available for this lab doesn't have DLP permission scope to fix it. That's an honest access-control blocker — but reading the actual docs surfaced a second, more interesting blocker that no amount of token permission would solve.
+
+**Blocker 1, architectural:** the docs are explicit — *"If you need different DLP policies for different use cases (e.g., per-tenant policy variance in a multi-tenant application), the recommended approach is to create separate gateways... and route requests to the appropriate gateway."* There is no per-request header to select a policy. `se-intel` made a deliberate choice in Week 1 to isolate tenants at the *data* layer (Vectorize metadata filter, DO key scoping) while sharing infrastructure (one Vectorize index, one set of Durable Object classes). AI Gateway routing extended that same "shared infra, isolated data" pattern — one `se-intel-gateway` for every org. DLP breaks that pattern: it's a policy that lives at the infrastructure layer, not the data layer, so it can't be tenant-scoped the way everything else in this system is. If `acme` needed a stricter DLP policy than `portfolio-org`, the only lever is a second gateway, which means the AI Gateway metadata tagging (`org_id`, `user_role`) that was built specifically to make one gateway serve every tenant would need to be partially undone.
+
+**Blocker 2, a genuine trade-off with an existing architecture decision:** DLP response-scanning buffers the *entire* provider response before releasing any of it to the client on a streaming request — the docs state TTFB increases "proportionally to the full response generation time." Chapter 7 of `STUDY.md` documents `se-intel`'s streaming architecture specifically to avoid exactly this: tokens reach the browser as they're generated, not after the full response completes. Turning on response DLP on the streaming route would silently reintroduce the "wait for the whole answer" latency the streaming architecture was built to eliminate. The docs do name a workaround — set `Check: Request` only, which doesn't buffer — but that only protects prompts going *into* the model, not the model's response, which is arguably the more likely real leak vector (the model reflecting back something it retrieved from RAG).
+
+### How I'd explain it to a customer / exec (practice out loud)
+We looked into adding automated PII detection on our AI traffic and found it's not a simple on-switch for a system like ours. The feature scans both what goes into the model and what comes back out, which is exactly what you'd want. But it applies one policy to everyone routed through the same gateway — there's no way to give one customer a stricter policy than another on the same gateway, the way we do for their actual data. If we ever need that, the fix is architectural — separate gateways per customer — not a settings change. There's also a real latency trade-off: scanning the model's response requires waiting for the entire response before any of it can be checked, which conflicts with the instant, word-by-word streaming experience we built deliberately. So the honest answer isn't "we'll turn it on next sprint" — it's "here are the two decisions that have to be made first, and here's what each one costs."
+
+### Tradeoff or open question
+The cleanest resolution for both blockers simultaneously would be one gateway per org (fixing the DLP tenant-scoping problem) with `Check: Request`-only DLP on all of them (avoiding the streaming-latency problem, at the cost of not scanning model responses). That's a real, buildable option — but it multiplies the number of gateways to manage from 1 to N (one per org), which is the same "index-per-org" trade-off Week 1 explicitly rejected for Vectorize (chosen instead: one shared index + metadata filter, "least ops overhead, more noisy-neighbor risk"). Whether that same rejection should hold for AI Gateway/DLP, or whether DLP is different enough (compliance-driven, not just an isolation nice-to-have) to justify the extra ops overhead this time, is an open question — worth a proper DIRECT decision block if this ever becomes a real Cycle target rather than a documented gap.
+
+---
+
 ## Date: 2026-07-07
 ## Resource: STUDY.md — Chapter 10 (Failure Modes) + Chapter 12 (Observability), applied to two live bugs found today
 ## Time Spent: 90 min
