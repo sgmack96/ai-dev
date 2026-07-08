@@ -1,7 +1,11 @@
 # MASTERY — Daily Command Center
 
 > **Open this file every morning.** It tells you exactly what today is.
-> **Goal:** Become an expert in scalable, distributed AI systems → land an Applied AI Architect role (Anthropic / OpenAI).
+> **Goal — dual-track, not sequential:**
+> 1. **Present:** Excel as a Cloudflare Solutions Engineer today — President's Club performance, deep platform mastery.
+> 2. **Future:** Build continuous, compounding proof toward Applied AI Architect / Solutions Engineer / Forward Deployed Engineer roles — Anthropic, OpenAI, and the wider company list in `README.md` Tier 2.
+>
+> These aren't competing tracks. `se-intel` and the RFP lab are deliberately built to double as day-job-relevant proof (Cloudflare's own Dev Platform → AI Gateway → Zero Trust motion) and external portfolio evidence at the same time — see `internal/cf-digital-native-strategy.md` (gitignored, local-only) for the day-job mapping. The 5-8 hrs/week budget only works *because* the work serves both goals at once, not despite it.
 > **Flagship:** `se-intel` (`ai-dev/projects/se-intel`) — the one system you harden continuously.
 > **This is continuous.** There is no end date. Cycles get harder. Expertise compounds.
 
@@ -120,22 +124,42 @@ Week A  →  AI-dev primary
 
 **Exception:** Real customer RFP or urgent call prep → drop everything, do that first. Job comes first.
 
+**Non-exception — dual-purpose work doesn't cost a context switch.** Some work serves both
+tracks from the same context, not by switching between them. Cycle 1 / Week 3's observability
+work is Cloudflare AI Gateway usage in production — direct day-job platform depth, not a
+detour from it. `rfp-lab/004-ai` (Pillar 4) is an RFP-curriculum deliverable built entirely
+around `se-intel` — RFP/curriculum-week work that *is* AI-dev-week work, not competing with
+it. When a task is genuinely dual-purpose like this, do it regardless of which week type it
+technically is — the alternation rule exists to prevent switching between *unrelated*
+contexts, not to block picking up free leverage when both tracks point at the same thing.
+
 ### Current week type
 - **Week of 2026-06-30:** AI-dev — Week 3 shipped AND fully closed (2026-07-06)
-- **Week of 2026-07-07:** RFP/curriculum → target: RFP 002 lab or demo practice
+- **Week of 2026-07-07:** RFP/curriculum → target: RFP 002 lab or demo practice (Pillar 4 of
+  the RFP lab, built 07-08, counts as dual-purpose per above — genuine RFP-curriculum output
+  that also deepened `se-intel` documentation)
 - **Week of 2026-07-14:** AI-dev → target: Cycle 1 / Week 4 — Failure under load
 
 ### Why this ratio
-Your day job makes you excellent through repetition — 7-10 calls/week is already doing that work.
-The side project makes you hireable for the next role. At 5-8 hrs/week, protect that time.
-The risk isn't neglecting calls. The risk is the side project time gets absorbed by RFP studying
-that your day job already covers, and the AI portfolio never gets far enough to matter.
+The day job and the portfolio are not competing claims on the same 5-8 hours — they're
+increasingly the same claim, viewed from two angles. Per the Goal statement above and
+`internal/cf-digital-native-strategy.md` (gitignored, local-only): `se-intel`'s stack
+(Workers, Workers AI, AI Gateway, Vectorize) mirrors the actual land-and-expand motion for
+the day-job segment, so platform depth built here is depth that shows up in calls, not just
+in interviews. The remaining real risk isn't "day job vs. portfolio" — it's the side project
+budget quietly getting absorbed by RFP studying that's *actually already covered* by day-job
+repetition (7-10 calls/week), which is genuinely single-purpose time, not dual-purpose. The
+distinction that matters: RFP-lab work built *around* `se-intel` (like Pillar 4) is
+dual-purpose and worth prioritizing; RFP-lab work that's pure day-job repetition (e.g., a
+new product's requirement matrix with no AI/portfolio angle) is single-purpose and should
+stay bounded to its own protected time, not bleed into the AI-dev budget.
 
 ### When you ask "what are we doing today" — the AI checks:
 1. Is there an open MASTERY week not fully closed? → finish that first (it's blocking Week 4)
-2. Which week type is it (A or B)? → AI-dev or RFP accordingly
-3. Is there a real customer call/RFP with urgency? → drop everything, prep that
-4. Are both tracks current? → your choice, AI suggests highest-leverage option
+2. Is there a dual-purpose option available (RFP-lab work built around `se-intel`, or `se-intel` work that's also real day-job platform depth)? → prioritize it regardless of week type — it's free leverage, not a context switch
+3. Otherwise, which week type is it (A or B)? → AI-dev or RFP accordingly
+4. Is there a real customer call/RFP with urgency? → drop everything, prep that
+5. Are both tracks current? → your choice, AI suggests highest-leverage option
 
 ---
 
