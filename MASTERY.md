@@ -7,6 +7,47 @@
 
 ---
 
+## ☀️ TODAY — 2026-07-08 (Wednesday)
+
+```
+TRACK:   RFP/curriculum week (per schedule) — started Pillar 4 (AI) of rfp-lab,
+         using se-intel as the proof of work.
+STATUS:  Pillar 4 was previously "Not Yet Started" in MASTER-RESPONSE-MATRIX.md.
+         Built today:
+           ✓ rfp-lab/004-ai/RFP-SUMMARY.md — 33-requirement self-constructed
+             mock RFP ("AI Infrastructure for Enterprise Sales Teams")
+           ✓ rfp-lab/004-ai/RESPONSE-MATRIX.md — answered all 33 against the
+             live se-intel system. 24 C (73%), 2 PC (6%), 7 NC (21%).
+           ✓ rfp-lab/004-ai/PORTFOLIO-NOTE.md — portfolio/LinkedIn-safe summary
+           ✓ Updated USE-CASE-NOTES.md — 2 of 5 original gaps closed (AI
+             Gateway, formal SLOs), PII redaction attempt honestly documented
+             as blocked by API token scope, not skipped
+           ✓ Corrected a real inconsistency found in Pillar 1's existing AI
+             Gateway section — "Budget controls per team" was rated C citing
+             rate limits that a live API check confirmed aren't configured
+             (rate_limiting_limit: 0). Fixed to PC.
+           ✓ Updated MASTER-RESPONSE-MATRIX.md Cross-Pillar Summary
+         Two ratings in the new matrix (failure-status tracking, fail-safe
+         middleware) were genuinely non-compliant the same morning this was
+         written — both are 07-07's live bug fixes, cited as proof rather
+         than hidden.
+
+TODAY:   Pillar 4 first pass is done. Remaining for this RFP/curriculum week:
+           (A) RFP-002 scenario subfolder (WHAT-CHANGED/CUSTOMER-STORY/
+               WIN-WIRE) — RFP-001 has one, RFP-002 doesn't yet
+           (B) Zero Trust demo practice — DEMO-SCRIPT.md cold reps
+           (C) Attempt to close a Pillar 4 gap for real if time allows —
+               gateway-level rate limiting is the most tractable (dashboard
+               config, no code); PII/DLP needs a broader-scoped API token
+
+NEXT AI-DEV WEEK (2026-07-14): Cycle 1 / Week 4 — Failure under load
+         (fallback injection via a debug-toggle mechanism, DO contention
+         handling — including the KV rate-limiter race found 07-07, now
+         also documented in rfp-lab/004-ai as OBS-06/SEC-05).
+```
+
+---
+
 ## ☀️ TODAY — 2026-07-07 (Tuesday)
 
 ```
@@ -176,4 +217,5 @@ The Applied AI Architect signature. (Unlock after Cycle 2 ships.)
 - 2026-06-26 — Week 2 COMPLETE ✅ THEORY (Chip Huyen Ch.3-4 + STUDY ch.8) logged in THEORY-LOG.md. NARRATE: Blog #2 published ("How I Built a CI Gate for My AI Agent"). Definition of Done: all 7 criteria met. Week 3 begins: Observability + SLOs + Account-Health Scorecard.
 - 2026-07-01 — Week 3 COMPLETE ✅ Observability + SLOs shipped. Key finding: initial 8000ms p95 SLO was wrong for 70B — real production data showed 11-13s. Recalibrated to 15000ms with documented rationale. `health-probe.sh` 4/4 passing (deterministic, no LLM). `/admin/health-scorecard` live — both orgs `status: healthy`. Deployed version `97e0b8a4`. Week 4 next: Failure under load — fallback injection, DO contention.
 - 2026-07-06 — Week 3 CLOSED ✅ Full close-out ritual completed (build was done 07-01, close-out had been sitting open). Sanity probes re-run first: health-probe 4/4 passed clean; isolation-test.sh failed 3/3 (`isolationOk: null`) — real finding, not a regression: the global Access JWT guard added in the Week 3 code didn't get the same treatment in the older Week 1 script (health-probe.sh already had the workaround header, isolation-test.sh didn't). Fixed, re-verified 3/3. COMPREHEND: answered all 5 cold — 2/5 solid as-is (waitUntil rationale, audit_log vs request_metrics split), 3/5 right in shape but light on specifics (SLO numbers, the JS-percentile-not-SQL detail, the probe dependency-chain reasoning) — closed the gaps in STUDY.md ch.12 rather than re-quizzing. STUDY.md Chapter 12 written (Concept/What We Built/Why/Interview Qs, same house style as ch.1-11). THEORY-LOG entry logged: SLO-as-error-budget-precondition insight + the isolation-test.sh drift as its own "test rot" lesson. NARRATE: portfolio project page updated with a Cycle 1 (Weeks 1-3) summary section linking both live blog posts — lighter lift than a full blog, as scoped. Also cleared 3 weeks of uncommitted work into 4 scoped commits (Week 2 evals-CI-gate, Week 3 observability/SLOs, the isolation-test.sh fix, this doc set) — flagged one undocumented bundled change (AI Gateway per-call routing metadata across several files) in the commit body rather than silently attributing it to either week. Week 4 (Failure under load) deferred to the 2026-07-14 AI-dev week per the schedule; rest of this week is RFP/curriculum.
-- 2026-07-07 — Small standalone patch (not Week 4 proper) ✅ Set out to fix one thing (writeMetric() hardcoded to "success") and found two live bugs. (1) Threaded real success/error status through both writeMetric() call sites in base-agent.ts; fixed the streaming path, which previously wrote NO audit event and NO metric at all on failure (worse than mislabeled — invisible); added a rate_limited write in index.ts's rate-limit middleware via c.executionCtx.waitUntil(). Verified live against D1: forced a real 429 by pre-seeding the KV counter, confirmed the rate_limited row landed with latency_ms:35. (2) While testing with a plain Bearer token, found the entire public demo (chat UI, /dev/token, all /api/v1/*) had been returning bare 401s to any real visitor since the Week 3 deploy on 07-01 — a global Access-JWT guard was scoped to the whole app instead of just the new admin routes, and neither health-probe.sh nor isolation-test.sh could ever have caught it because both carry a workaround header specifically built to route around that exact check. Also turned out to be pure redundancy (admin routes and /api/* both already have independent auth). Removed the guard, verified live: chat UI 200, full agent round-trip succeeds with zero special headers, both probes still 4/4 + 3/3. Deliberately did NOT fix a third finding (KV rate-limiter loses most of its count under true concurrency — 25 near-simultaneous requests left the counter at 10) — that's real Week 4 material, logged for 07-14. Documented all three in CYCLE-1-WEEK-3's postscript + a THEORY-LOG entry on the repeating "test workaround = blind spot" pattern (3rd instance in 4 days: isolation-test.sh drift → this auth outage → the rate-limiter race, all same root shape). Two commits, deployed twice, both live and verified.
+- 2026-07-07 — Small standalone patch (not Week 4 proper) ✅ Set out to fix one thing (writeMetric() hardcoded to "success") and found two live bugs. (1) Threaded real success/error status through both writeMetric() call sites in base-agent.ts; fixed the streaming path, which previously wrote NO audit event and NO metric at all on failure (worse than mislabeled — invisible); added a rate_limited write in index.ts's rate-limit middleware via c.executionCtx.waitUntil(). Verified live against D1: forced a real 429 by pre-seeding the KV counter, confirmed the rate_limited row landed with latency_ms:35. (2) While testing with a plain Bearer token, found the entire public demo (chat UI, /dev/token, all /api/v1/*) had been returning bare 401s to any real visitor since the Week 3 deploy on 07-01 — a global Access-JWT guard was scoped to the whole app instead of just the new admin routes, and neither health-probe.sh nor isolation-test.sh could ever have caught it because both carry a workaround header specifically built to route around that exact check. Also turned out to be pure redundancy (admin routes and /api/* both already have independent auth). Removed the guard, verified live: chat UI 200, full agent round-trip succeeds with zero special headers, both probes still 4/4 + 3/3. Deliberately did NOT fix a third finding (KV rate-limiter loses most of its count under true concurrency — 25 near-simultaneous requests left the counter at 10) — that's real Week 4 material, logged for 07-14. Documented all three in CYCLE-1-WEEK-3's postscript + a THEORY-LOG entry on the repeating "test workaround = blind spot" pattern (3rd instance in 4 days: isolation-test.sh drift → this auth outage → the rate-limiter race, all same root shape). Two commits, deployed twice, both live and verified. Separately: shared a Pragmatic Engineer article on Forward Deployed Engineers; rewrote README.md — retired the stale 30-day-sprint/golf-agent framing, updated Anthropic's 5 current role variants, and added a Tier 2 (FDE) section widening the target company list beyond Anthropic/OpenAI to Palantir, Ramp, Scale AI, Sierra AI, and others, per request.
+- 2026-07-08 — Started rfp-lab Pillar 4 (AI) ✅ Was "Not Yet Started" in MASTER-RESPONSE-MATRIX.md; USE-CASE-NOTES.md already had a 4-step plan written but never executed. Built all 4 planned artifacts: RFP-SUMMARY.md (33-requirement self-constructed mock RFP, "AI Infrastructure for Enterprise Sales Teams"), RESPONSE-MATRIX.md (answered all 33 against the live se-intel system — 24 C/73%, 2 PC/6%, 7 NC/21%), PORTFOLIO-NOTE.md, and updated USE-CASE-NOTES.md's gap list (2 of the original 5 gaps were already closed by Cycle 1 Weeks 1-3 without anyone noticing — AI Gateway integration and formal SLOs). Attempted to close the PII-redaction gap for real (DLP is enabled on se-intel-gateway but has 0 policies) — blocked honestly by API token scope (Workers AI Edit only), documented as a real access-control blocker rather than skipped. Found and fixed a real inconsistency while cross-checking: Pillar 1's existing AI Gateway section rated "budget controls per team" as Compliant citing rate limits that a live API check proved aren't configured (rate_limiting_limit: 0) — corrected to Partially Compliant. Two ratings in the new Pillar 4 matrix (failure-status tracking, fail-safe middleware) are 07-07's bug fixes, cited as proof of the exercise catching real things, not hidden. Updated MASTER-RESPONSE-MATRIX.md's Cross-Pillar Summary. Remaining for this RFP week: RFP-002 scenario subfolder, Zero Trust demo reps, or attempt a tractable Pillar 4 gap (gateway-level rate limiting is dashboard-only, no code needed).
